@@ -1,3 +1,5 @@
+# + PostgreSQL with Diagnostic pages, + US OPRA markets with Market Holidays and Market Timings, + Server side Timezone, Locale config from .env, + Frontend build time TIMEZONE, Locale confige from .env
+
 # OpenAlgo - Open Source Algorithmic Trading Platform
 
 <div align="center">
