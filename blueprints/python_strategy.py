@@ -1,5 +1,5 @@
 """
-Python Strategy Hosting System - Cross-Platform Process Isolation with IST Support
+Python Strategy Hosting System - Cross-Platform Process Isolation with LOCAL TIMEZONE Support
 Route: /python
 Features: Upload, Start, Stop, Schedule, Delete strategies
 Supports: Windows, Linux, macOS
@@ -20,6 +20,7 @@ from pathlib import Path
 from time import monotonic, sleep
 
 import psutil
+import os
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -55,8 +56,31 @@ logger = logging.getLogger(__name__)
 # Create blueprint with /python route
 python_strategy_bp = Blueprint("python_strategy_bp", __name__, url_prefix="/python")
 
-# Timezone configuration - Indian Standard Time
-IST = pytz.timezone("Asia/Kolkata")
+# Timezone configuration - Dynamic based on .env
+LOCAL_TZ = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
+
+def get_tz_name():
+    """Helper to dynamically fetch the string abbreviation of the configured timezone"""
+    return datetime.now(LOCAL_TZ).tzname() or "Local"
+
+def get_local_time():
+    """Get current time in configured timezone"""
+    return datetime.now(LOCAL_TZ)
+
+def format_local_time(dt):
+    """Format datetime to local timezone string"""
+    if dt:
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+            except Exception:
+                return dt
+        if not dt.tzinfo:
+            dt = LOCAL_TZ.localize(dt)
+        else:
+            dt = dt.astimezone(LOCAL_TZ)
+        return dt.strftime(f"%Y-%m-%d %H:%M:%S {get_tz_name()}")
+    return ""
 
 # Global storage with thread locks for safety
 RUNNING_STRATEGIES = {}  # {strategy_id: {'process': subprocess.Popen, 'started_at': datetime}}
@@ -82,7 +106,7 @@ def broadcast_status_update(strategy_id: str, status: str, message: str = None):
         "strategy_id": strategy_id,
         "status": status,
         "message": message,
-        "timestamp": datetime.now(IST).isoformat(),
+        "timestamp": datetime.now(LOCAL_TZ).isoformat(),
     }
     event = f"data: {json.dumps(event_data)}\n\n"
 
@@ -112,22 +136,22 @@ IS_LINUX = OS_TYPE == "linux"
 
 
 def init_scheduler():
-    """Initialize the APScheduler with IST timezone"""
+    """Initialize the APScheduler with LOCAL timezone"""
     global SCHEDULER
     if SCHEDULER is None:
-        SCHEDULER = BackgroundScheduler(daemon=True, timezone=IST)
+        SCHEDULER = BackgroundScheduler(daemon=True, timezone=LOCAL_TZ)
         SCHEDULER.start()
-        logger.debug(f"Scheduler initialized with IST timezone on {OS_TYPE}")
+        logger.debug(f"Scheduler initialized with {LOCAL_TZ} timezone on {OS_TYPE}")
 
-        # Add daily trading day check job - runs at 00:01 IST every day
+        # Add daily trading day check job - runs at 00:01 LOCAL_TZ every day
         # This stops scheduled strategies on weekends/holidays
         SCHEDULER.add_job(
             func=daily_trading_day_check,
-            trigger=CronTrigger(hour=0, minute=1, timezone=IST),
+            trigger=CronTrigger(hour=0, minute=1, timezone=LOCAL_TZ),
             id="daily_trading_day_check",
             replace_existing=True,
         )
-        logger.debug("Daily trading day check scheduled at 00:01 IST")
+        logger.debug("Daily trading day check scheduled at 00:01 " + str(LOCAL_TZ))
 
         # Add market hours enforcer - runs every minute during trading hours
         # This stops scheduled strategies when market closes
@@ -309,13 +333,13 @@ def check_master_contract_ready(skip_on_startup=False):
         return False, f"Error checking master contract readiness: {str(e)}"
 
 
-def get_ist_time():
-    """Get current IST time"""
-    return datetime.now(IST)
+def get_local_time():
+    """Get current LOCAL time"""
+    return datetime.now(LOCAL_TZ)
 
 
-def format_ist_time(dt):
-    """Format datetime to IST string"""
+def format_local_time(dt):
+    """Format datetime to LOCAL_TZ string"""
     if dt:
         if isinstance(dt, str):
             try:
@@ -323,10 +347,10 @@ def format_ist_time(dt):
             except Exception:
                 return dt
         if not dt.tzinfo:
-            dt = IST.localize(dt)
+            dt = LOCAL_TZ.localize(dt)
         else:
-            dt = dt.astimezone(IST)
-        return dt.strftime("%Y-%m-%d %H:%M:%S IST")
+            dt = dt.astimezone(LOCAL_TZ)
+        return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
     return ""
 
 
@@ -471,9 +495,9 @@ def start_strategy_process(strategy_id):
             return False, f"Master contract dependency not met: {contract_message}"
 
         try:
-            # Create log file for this run with IST timestamp
-            ist_now = get_ist_time()
-            log_file = LOGS_DIR / f"{strategy_id}_{ist_now.strftime('%Y%m%d_%H%M%S')}_IST.log"
+            # Create log file for this run with Local timestamp
+            local_now = get_local_time()
+            log_file = LOGS_DIR / f"{strategy_id}_{local_now.strftime('%Y%m%d_%H%M%S')}_{get_tz_name()}.log"
 
             # Ensure log directory exists with proper permissions
             log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -502,10 +526,10 @@ def start_strategy_process(strategy_id):
                 logger.exception(f"Error creating log file: {e}")
                 return False, f"Error creating log file: {str(e)}"
 
-            # Write header with IST time
+            # Write header with Local time
             log_handle.write(
-                f"=== Strategy Started at {ist_now.strftime('%Y-%m-%d %H:%M:%S IST')} ===\n"
-            )
+                f"=== Strategy Started at {local_now.strftime('%Y-%m-%d %H:%M:%S')} {get_tz_name()} ===\n"
+            )            
             log_handle.write(f"=== Platform: {OS_TYPE} ===\n\n")
             log_handle.flush()
 
@@ -582,13 +606,13 @@ def start_strategy_process(strategy_id):
             RUNNING_STRATEGIES[strategy_id] = {
                 "process": process,
                 "pid": process.pid,
-                "started_at": ist_now,
+                "started_at": local_now,
                 "log_file": str(log_file),
             }
 
             # Update config with IST time
             STRATEGY_CONFIGS[strategy_id]["is_running"] = True
-            STRATEGY_CONFIGS[strategy_id]["last_started"] = ist_now.isoformat()
+            STRATEGY_CONFIGS[strategy_id]["last_started"] = local_now.isoformat()
             STRATEGY_CONFIGS[strategy_id]["pid"] = process.pid
             # Clear any previous error state
             STRATEGY_CONFIGS[strategy_id].pop("is_error", None)
@@ -598,17 +622,17 @@ def start_strategy_process(strategy_id):
 
             # Broadcast status update via SSE
             broadcast_status_update(
-                strategy_id, "running", f"Started at {ist_now.strftime('%H:%M:%S IST')}"
+                strategy_id, "running", f"Started at {local_now.strftime('%H:%M:%S')} {get_tz_name()}"
             )
 
             logger.info(
-                f"Started strategy {strategy_id} with PID {process.pid} at {ist_now.strftime('%H:%M:%S IST')} on {OS_TYPE}"
+                f"Started strategy {strategy_id} with PID {process.pid} at {local_now.strftime('%H:%M:%S')} {get_tz_name()} on {OS_TYPE}"
             )
             return (
                 True,
-                f"Strategy started with PID {process.pid} at {ist_now.strftime('%H:%M:%S IST')}",
+                f"Strategy started with PID {process.pid} at {local_now.strftime('%H:%M:%S')} {get_tz_name()}",
             )
-
+        
         except Exception as e:
             logger.exception(f"Failed to start strategy {strategy_id}: {e}")
             return False, f"Failed to start strategy: {str(e)}"
@@ -676,7 +700,7 @@ def stop_strategy_process(strategy_id):
                 if config is not None:
                     config["is_running"] = False
                     config["pid"] = None
-                    config["last_stopped"] = get_ist_time().isoformat()
+                    config["last_stopped"] = get_local_time().isoformat()
                     save_configs()
             return True, "Strategy stopped"
 
@@ -714,13 +738,13 @@ def stop_strategy_process(strategy_id):
         # The entry is claimed, so the log handle is ours alone to close.
         close_log_handle_safely(strategy_info)
 
-        ist_now = get_ist_time()
+        local_now = get_local_time()
         status = status_message = None
         with PROCESS_LOCK:
             config = STRATEGY_CONFIGS.get(strategy_id)
             if config is not None:
                 config["is_running"] = False
-                config["last_stopped"] = ist_now.isoformat()
+                config["last_stopped"] = local_now.isoformat()
                 config["pid"] = None
                 save_configs()
                 status, status_message = get_schedule_status(config)
@@ -732,7 +756,7 @@ def stop_strategy_process(strategy_id):
         if status is not None:
             broadcast_status_update(strategy_id, status, status_message)
 
-        logger.info(f"Stopped strategy {strategy_id} at {ist_now.strftime('%H:%M:%S IST')}")
+        logger.info(f"Stopped strategy {strategy_id} at {local_now.strftime('%H:%M:%S IST')}")
 
         # Cleanup old log files based on configured limits
         try:
@@ -746,7 +770,7 @@ def stop_strategy_process(strategy_id):
         with PROCESS_LOCK:
             STOPPING_STRATEGIES.discard(strategy_id)
 
-    return True, f"Strategy stopped at {ist_now.strftime('%H:%M:%S IST')}"
+    return True, f"Strategy stopped at {local_now.strftime('%H:%M:%S IST')}"
 
 
 def psutil_process_has_exited(process):
@@ -1111,7 +1135,7 @@ def is_trading_day(exchange: str = DEFAULT_STRATEGY_EXCHANGE) -> bool:
         if os.getenv("DISABLE_SESSION_EXPIRY", "false").lower() == "true":
             return True
 
-        today = datetime.now(IST).date()
+        today = datetime.now(LOCAL_TZ).date()
 
         # Special session on weekend / holiday wins.
         if get_special_session(today, exch):
@@ -1178,7 +1202,7 @@ def get_market_status(exchange: str = DEFAULT_STRATEGY_EXCHANGE) -> dict:
                 "exchange": exch,
             }
 
-        now = datetime.now(IST)
+        now = datetime.now(LOCAL_TZ)
         today = now.date()
         now_ms = int(now.timestamp() * 1000)
 
@@ -1266,7 +1290,7 @@ def scheduled_start_strategy(strategy_id: str):
     if not config:
         return
 
-    now = datetime.now(IST)
+    now = datetime.now(LOCAL_TZ)
     day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
     today_day = day_names[now.weekday()]
 
@@ -1334,7 +1358,7 @@ def _is_strategy_running(strategy_id: str, config: dict) -> bool:
 
 def daily_trading_day_check():
     """
-    00:01 IST daily check. Stops each scheduled strategy whose exchange has
+    00:01 LOCAL_TZ daily check. Stops each scheduled strategy whose exchange has
     no session today. Exchange-aware: an MCX strategy keeps running on an
     NSE holiday; an NSE strategy stops; a CRYPTO strategy never stops.
     """
@@ -1395,12 +1419,14 @@ def is_within_schedule_time(strategy_id: str) -> bool:
         schedule_start = config.get("schedule_start")
         schedule_stop = config.get("schedule_stop")
 
-        now = datetime.now(IST)
+        now = datetime.now(LOCAL_TZ)
         now_ms = int(now.timestamp() * 1000)
 
         # Resolve the user's window for today (epoch-ms)
-        midnight_ist = IST.localize(datetime.combine(now.date(), datetime.min.time()))
-        midnight_ms = int(midnight_ist.timestamp() * 1000)
+        midnight_local = LOCAL_TZ.localize(
+            datetime.combine(now.date(), datetime.min.time())
+        )
+        midnight_ms = int(midnight_local.timestamp() * 1000)
 
         if schedule_start:
             try:
@@ -1461,7 +1487,7 @@ def market_hours_enforcer():
         if not is_trading_day_enforcement_enabled():
             return
 
-        now = datetime.now(IST)
+        now = datetime.now(LOCAL_TZ)
         day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
         today_day = day_names[now.weekday()]
 
@@ -1556,14 +1582,14 @@ def cleanup_strategy_logs(strategy_id: str):
         if not log_files:
             return
 
-        now = datetime.now(IST)
+        now = datetime.now(LOCAL_TZ)
         deleted_count = 0
 
         # 1. Delete logs older than retention days
         for log_file in log_files[:]:  # Copy list to allow modification
             try:
                 file_age_days = (
-                    now - datetime.fromtimestamp(log_file.stat().st_mtime, tz=IST)
+                    now - datetime.fromtimestamp(log_file.stat().st_mtime, tz=LOCAL_TZ)
                 ).days
                 if file_age_days > retention_days:
                     log_file.unlink()
@@ -1607,7 +1633,7 @@ def cleanup_strategy_logs(strategy_id: str):
 
 def schedule_strategy(strategy_id, start_time, stop_time=None, days=None):
     """
-    Schedule a strategy to run at specific times (IST).
+    Schedule a strategy to run at specific times (LOCAL_TZ).
     Allows any day of the week to support special exchange sessions (e.g., Muhurat trading).
     """
     if not days:
@@ -1635,11 +1661,11 @@ def schedule_strategy(strategy_id, start_time, stop_time=None, days=None):
     if SCHEDULER.get_job(stop_job_id):
         SCHEDULER.remove_job(stop_job_id)
 
-    # Schedule start with holiday check wrapper (time is already in IST from frontend)
+    # Schedule start with holiday check wrapper (time is already in LOCAL_TZ from frontend)
     hour, minute = map(int, start_time.split(":"))
     SCHEDULER.add_job(
         func=lambda: scheduled_start_strategy(strategy_id),
-        trigger=CronTrigger(hour=hour, minute=minute, day_of_week=",".join(days), timezone=IST),
+        trigger=CronTrigger(hour=hour, minute=minute, day_of_week=",".join(days), timezone=LOCAL_TZ),
         id=start_job_id,
         replace_existing=True,
     )
@@ -1649,7 +1675,7 @@ def schedule_strategy(strategy_id, start_time, stop_time=None, days=None):
         hour, minute = map(int, stop_time.split(":"))
         SCHEDULER.add_job(
             func=lambda: scheduled_stop_strategy(strategy_id),
-            trigger=CronTrigger(hour=hour, minute=minute, day_of_week=",".join(days), timezone=IST),
+            trigger=CronTrigger(hour=hour, minute=minute, day_of_week=",".join(days), timezone=LOCAL_TZ),
             id=stop_job_id,
             replace_existing=True,
         )
@@ -1662,7 +1688,7 @@ def schedule_strategy(strategy_id, start_time, stop_time=None, days=None):
     save_configs()
 
     logger.debug(
-        f"Scheduled strategy {strategy_id}: {start_time} - {stop_time} IST on {days} (holiday check enforced)"
+        f"Scheduled strategy {strategy_id}: {start_time} - {stop_time} {LOCAL_TZ} on {days} (holiday check enforced)"
     )
 
 
@@ -1708,13 +1734,13 @@ def index():
             "is_scheduled": config.get("is_scheduled", False),
             "is_error": config.get("is_error", False),
             "error_message": config.get("error_message", ""),
-            "error_time": format_ist_time(config.get("error_time", "")),
+            "error_time": format_local_time(config.get("error_time", "")),
             "schedule_start": config.get("schedule_start", ""),
             "schedule_stop": config.get("schedule_stop", ""),
             "schedule_days": config.get("schedule_days", []),
             "created_at": config.get("created_at", ""),
-            "last_started": format_ist_time(config.get("last_started", "")),
-            "last_stopped": format_ist_time(config.get("last_stopped", "")),
+            "last_started": format_local_time(config.get("last_started", "")),
+            "last_stopped": format_local_time(config.get("last_stopped", "")),
             "pid": config.get("pid"),
             "params": {},  # No params needed in simplified version
         }
@@ -1728,13 +1754,13 @@ def index():
         strategies.append(strategy_info)
 
     # Get current IST time for the page
-    current_ist = get_ist_time().strftime("%Y-%m-%d %H:%M:%S IST")
+    current_local = get_local_time().strftime("%Y-%m-%d %H:%M:%S")
 
     return render_template(
         "python_strategy/index.html",
         strategies=strategies,
-        current_ist_time=current_ist,
-        platform=OS_TYPE.capitalize(),
+        current_ist_time=current_local,
+        platform=OS_TYPE.capitalize()
     )
 
 
@@ -1776,14 +1802,14 @@ def new_strategy():
                 flash("Invalid filename", "error")
                 return redirect(request.url)
 
-            # Generate unique ID with IST timestamp from sanitized filename
-            ist_now = get_ist_time()
+            # Generate unique ID with LOCAL_TZ timestamp from sanitized filename
+            local_now = get_local_time()
             safe_stem = Path(safe_filename).stem
             # Further sanitize: only allow alphanumeric, underscore, and hyphen
             safe_stem = "".join(c for c in safe_stem if c.isalnum() or c in "_-")
             if not safe_stem:
                 safe_stem = "strategy"
-            strategy_id = f"{safe_stem}_{ist_now.strftime('%Y%m%d%H%M%S')}"
+            strategy_id = f"{safe_stem}_{local_now.strftime('%Y%m%d%H%M%S')}"
 
             # Save file with sanitized path
             file_path = STRATEGIES_DIR / f"{strategy_id}.py"
@@ -1853,7 +1879,7 @@ def new_strategy():
                 "exchange": exchange,
                 "is_running": False,
                 "is_scheduled": True,  # Always enabled by default
-                "created_at": ist_now.isoformat(),
+                "created_at": local_now.isoformat(),
                 "user_id": user_id,
                 "schedule_start": schedule_start,
                 "schedule_stop": schedule_stop,
@@ -1903,7 +1929,7 @@ def start_strategy(strategy_id):
     # Check if scheduler is enabled - auto-enable with defaults for old strategies
     config = STRATEGY_CONFIGS.get(strategy_id, {})
     if not config.get("is_scheduled"):
-        # Auto-enable scheduler with defaults for old strategies (Mon-Fri, 09:00-16:00 IST)
+        # Auto-enable scheduler with defaults for old strategies (Mon-Fri, 09:00-16:00 LOCAL_TZ)
         logger.info(
             f"Auto-enabling scheduler for legacy strategy {strategy_id} with default schedule"
         )
@@ -1932,7 +1958,7 @@ def start_strategy(strategy_id):
 
     # Check schedule constraints
     schedule_days = config.get("schedule_days", [])
-    now = datetime.now(IST)
+    now = datetime.now(LOCAL_TZ)
     day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
     today_day = day_names[now.weekday()]
 
@@ -1963,21 +1989,21 @@ def start_strategy(strategy_id):
         # Determine the reason and next start time
         if is_holiday:
             reason = "Market holiday"
-            next_start = f"next trading day at {schedule_start} IST"
+            next_start = f"next trading day at {schedule_start} {LOCAL_TZ}"
         elif not is_scheduled_day:
             reason = f"Today ({today_day.capitalize()}) is not in schedule"
             # Find next scheduled day
             next_days = list(schedule_days)
-            next_start = f"next scheduled day ({', '.join(next_days)}) at {schedule_start} IST"
+            next_start = f"next scheduled day ({', '.join(next_days)}) at {schedule_start} {LOCAL_TZ}"
         else:
-            reason = f"Outside schedule hours ({schedule_start} - {schedule_stop} IST)"
+            reason = f"Outside schedule hours ({schedule_start} - {schedule_stop} {LOCAL_TZ})"
             if now < start_time:
-                next_start = f"today at {schedule_start} IST"
+                next_start = f"today at {schedule_start} {LOCAL_TZ}"
             else:
-                next_start = f"next scheduled day at {schedule_start} IST"
+                next_start = f"next scheduled day at {schedule_start} {LOCAL_TZ}"
 
         logger.info(
-            f"Strategy {strategy_id} armed for scheduled start. Reason: {reason}. Next start: {next_start}"
+            f"Strategy {strategy_id} armed for scheduled start. Reason: {reason}. Next start: {next_start} {LOCAL_TZ}"
         )
 
         return jsonify(
@@ -2072,9 +2098,9 @@ def schedule_strategy_route(strategy_id):
         schedule_strategy(strategy_id, start_time, stop_time, days)
         save_configs()
         exch = STRATEGY_CONFIGS[strategy_id].get("exchange", DEFAULT_STRATEGY_EXCHANGE)
-        schedule_info = f"[{exch}] Scheduled at {start_time} IST"
+        schedule_info = f"[{exch}] Scheduled at {start_time} {LOCAL_TZ}"
         if stop_time:
-            schedule_info += f" - {stop_time} IST"
+            schedule_info += f" - {stop_time} {LOCAL_TZ}"
         return jsonify({"status": "success", "message": schedule_info})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -2178,7 +2204,7 @@ def view_logs(strategy_id):
                 {
                     "name": log_file.name,
                     "size": log_file.stat().st_size,
-                    "modified": datetime.fromtimestamp(log_file.stat().st_mtime, tz=IST),
+                    "modified": datetime.fromtimestamp(log_file.stat().st_mtime, tz=LOCAL_TZ),
                 }
             )
     except Exception as e:
@@ -2331,7 +2357,7 @@ def status():
             "running": len(RUNNING_STRATEGIES),
             "total": len(STRATEGY_CONFIGS),
             "scheduler_running": SCHEDULER is not None and SCHEDULER.running,
-            "current_ist_time": get_ist_time().strftime("%H:%M:%S IST"),
+            "current_ist_time": get_local_time().strftime("%H:%M:%S %Z"),
             "platform": OS_TYPE,
             # Legacy field names (for backward compatibility)
             "master_contracts_ready": contracts_ready,
@@ -2391,7 +2417,7 @@ def get_schedule_status(config):
     - scheduled: Strategy is armed and will auto-start at scheduled time
     - paused: Market holiday, strategy won't run today
     """
-    now = datetime.now(IST)
+    now = datetime.now(LOCAL_TZ)
     day_names = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
     today_day = day_names[now.weekday()]
     current_time = now.strftime("%H:%M")
@@ -2412,24 +2438,24 @@ def get_schedule_status(config):
 
     # Strategy is armed (not manually stopped) - show "Scheduled" with context
     # Check if today is in schedule days
+    # Check if today is in schedule days
     if schedule_days and today_day not in schedule_days_lower:
         # Find next scheduled day
         next_days = ", ".join([d.capitalize() for d in schedule_days[:3]])
         if len(schedule_days) > 3:
             next_days += "..."
-        return "scheduled", f"Next: {next_days} at {schedule_start} IST"
+        return "scheduled", f"Next: {next_days} at {schedule_start} {get_tz_name()}"
 
     # Today is a scheduled day - check time
     if schedule_start and schedule_stop:
         if current_time < schedule_start:
-            return "scheduled", f"Starts today at {schedule_start} IST"
+            return "scheduled", f"Starts today at {schedule_start} {get_tz_name()}"
         elif current_time > schedule_stop:
             # After today's window, will start next scheduled day
-            return "scheduled", f"Next scheduled day at {schedule_start} IST"
+            return "scheduled", f"Next scheduled day at {schedule_start} {get_tz_name()}"
 
     # Within schedule window
-    return "scheduled", f"Active window: {schedule_start} - {schedule_stop} IST"
-
+    return "scheduled", f"Active window: {schedule_start} - {schedule_stop} {get_tz_name()}"
 
 #: Display order and descriptive names for the /python exchange selector. Only
 #: the *name* lives here. The session window shown beside it is read from the
@@ -2671,7 +2697,7 @@ def api_get_strategy_content(strategy_id):
                 "is_running": config.get("is_running", False),
                 "line_count": content.count("\n") + 1,
                 "size_kb": file_stats.st_size / 1024,
-                "last_modified": datetime.fromtimestamp(file_stats.st_mtime, tz=IST).isoformat(),
+                "last_modified": datetime.fromtimestamp(file_stats.st_mtime, tz=LOCAL_TZ).isoformat(),
             }
         )
     except Exception as e:
@@ -2701,7 +2727,7 @@ def api_get_log_files(strategy_id):
                 {
                     "name": log_file.name,
                     "size_kb": stats.st_size / 1024,
-                    "last_modified": datetime.fromtimestamp(stats.st_mtime, tz=IST).isoformat(),
+                    "last_modified": datetime.fromtimestamp(stats.st_mtime, tz=LOCAL_TZ).isoformat(),
                 }
             )
     except Exception as e:
@@ -2758,7 +2784,7 @@ def api_get_log_content(strategy_id, log_name):
                 "content": content,
                 "lines": line_count,
                 "size_kb": stats.st_size / 1024,
-                "last_updated": datetime.fromtimestamp(stats.st_mtime, tz=IST).isoformat(),
+                "last_updated": datetime.fromtimestamp(stats.st_mtime, tz=LOCAL_TZ).isoformat(),
             }
         )
     except Exception as e:
@@ -2804,7 +2830,7 @@ def edit_strategy(strategy_id):
     file_info = {
         "name": file_path.name,
         "size": file_stats.st_size,
-        "modified": datetime.fromtimestamp(file_stats.st_mtime, tz=IST),
+        "modified": datetime.fromtimestamp(file_stats.st_mtime, tz=LOCAL_TZ),
         "lines": content.count("\n") + 1,
     }
 
@@ -2911,7 +2937,7 @@ def save_strategy(strategy_id):
             f.write(new_content)
 
         # Update config
-        config["last_modified"] = get_ist_time().isoformat()
+        config["last_modified"] = get_local_time().isoformat()
         save_configs()
 
         logger.info(f"Strategy {strategy_id} saved successfully")
@@ -2919,7 +2945,7 @@ def save_strategy(strategy_id):
             {
                 "status": "success",
                 "message": "Strategy saved successfully",
-                "timestamp": format_ist_time(config["last_modified"]),
+                "timestamp": format_local_time(config["last_modified"]),
             }
         )
 
@@ -2972,17 +2998,17 @@ def restore_running_strategy_process(strategy_id, config):
             logger.debug(f"PID {pid} exists but not our strategy process")
             return False
 
-        ist_now = get_ist_time()
+        local_now = get_local_time()
 
         # Find the current log file
-        log_pattern = f"{strategy_id}_*_IST.log"
+        log_pattern = f"{strategy_id}_*_LOCALTIME.log"
         log_files = list(LOGS_DIR.glob(log_pattern))
         current_log = max(log_files, key=lambda f: f.stat().st_mtime) if log_files else None
 
         RUNNING_STRATEGIES[strategy_id] = {
             "process": process,
             "pid": pid,
-            "started_at": datetime.fromisoformat(config.get("last_started", ist_now.isoformat())),
+            "started_at": datetime.fromisoformat(config.get("last_started", local_now.isoformat())),
             "log_file": str(current_log) if current_log else None,
             "log_handle": None,  # We can't restore the file handle
         }
@@ -3042,7 +3068,7 @@ def restore_strategy_states():
                 config["is_running"] = False
                 config["is_error"] = True
                 config["error_message"] = "Waiting for master contracts to be downloaded"
-                config["error_time"] = get_ist_time().isoformat()
+                config["error_time"] = get_local_time().isoformat()
                 config["pid"] = None
         save_configs()
         return
@@ -3064,7 +3090,7 @@ def restore_strategy_states():
                         config["is_running"] = False
                         config["is_error"] = True
                         config["error_message"] = f"Failed to restart: {message}"
-                        config["error_time"] = get_ist_time().isoformat()
+                        config["error_time"] = get_local_time().isoformat()
                         config["pid"] = None
                         logger.error(f"Failed to restart strategy {strategy_id}: {message}")
                         error_count += 1
@@ -3073,7 +3099,7 @@ def restore_strategy_states():
                     config["is_running"] = False
                     config["is_error"] = True
                     config["error_message"] = f"Restart exception: {str(e)}"
-                    config["error_time"] = get_ist_time().isoformat()
+                    config["error_time"] = get_local_time().isoformat()
                     config["pid"] = None
                     logger.exception(f"Exception restarting strategy {strategy_id}: {e}")
                     error_count += 1
@@ -3183,7 +3209,7 @@ def initialize_with_app_context():
                     try:
                         schedule_strategy(strategy_id, start_time, stop_time, days)
                         logger.debug(
-                            f"Restored schedule for strategy {strategy_id} at {start_time} IST"
+                            f"Restored schedule for strategy {strategy_id} at {start_time} {LOCAL_TZ}"
                         )
                         restored_schedules += 1
                     except Exception as e:

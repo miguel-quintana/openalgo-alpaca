@@ -29,6 +29,7 @@ the right response to a throttle there is to fail loudly rather than sleep and
 retry - see broker/indmoney/api/auth_api.py.
 """
 
+import os
 import threading
 import time
 from datetime import datetime
@@ -39,7 +40,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_IST = ZoneInfo("Asia/Kolkata")
+_IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 # Documented ceiling in requests/second, per category.
 _DOCUMENTED_RATE = {

@@ -25,7 +25,7 @@ from utils.constants import CRYPTO_EXCHANGES, EXCHANGE_CRYPTO
 from utils.logging import get_logger
 
 # IST Timezone
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 logger = get_logger(__name__)
 
@@ -48,30 +48,50 @@ Base = declarative_base()
 Base.query = db_session.query_property()
 
 # Supported exchanges
-SUPPORTED_EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "MCX", "BCD", "CDS", "NCO", "CRYPTO"]
+# SUPPORTED_EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "MCX", "BCD", "CDS", "NCO", "CRYPTO"]
+# Update the SUPPORTED_EXCHANGES list to include US and OPRA
+SUPPORTED_EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "MCX", "BCD", "CDS", "NCO", "CRYPTO", "US", "OPRA"]
 
 # Holiday types
 HOLIDAY_TYPES = ["TRADING_HOLIDAY", "SETTLEMENT_HOLIDAY", "SPECIAL_SESSION"]
 
-# Default market timings (in epoch milliseconds offset from midnight IST)
+# Default market timings (in epoch milliseconds offset from midnight IST configured from env TIMEZONE)
+# Note: The offsets are in milliseconds from midnight of the exchange's local timezone (IST for Indian exchanges, EST for US exchanges).
+# For US Equities and OPRA Options, the timings are set to 09:30 - 16:00 EST (14:30 - 21:00 IST) and assume the server is running in America/New_York timezone. Adjust if needed.
+# (Note: This assumes your system TIMEZONE is set to America/New_York to calculate local midnight correctly. If your server is in a different timezone, adjust the offsets accordingly.)
 DEFAULT_MARKET_TIMINGS = {
-    "NSE": {"start_offset": 33300000, "end_offset": 55800000},  # 09:15 - 15:30
-    "BSE": {"start_offset": 33300000, "end_offset": 55800000},  # 09:15 - 15:30
-    # F&O runs past the cash close. SEBI's Closing Auction Session (circular
-    # HO/47/11/11(3)2025-MRD-POD2/I/2765/2026, effective 2026-08-03) applies to
-    # the equity cash segment only: cash pauses continuous trading at 15:15 and
-    # its close is derived by auction, while the derivatives segment keeps
-    # trading to roughly 15:40. Cutting NFO/BFO off at 15:30 would make the last
-    # ten minutes of live F&O invisible to anything driven by these timings.
-    "NFO": {"start_offset": 33300000, "end_offset": 56400000},  # 09:15 - 15:40
-    "BFO": {"start_offset": 33300000, "end_offset": 56400000},  # 09:15 - 15:40
-    "CDS": {"start_offset": 32400000, "end_offset": 61200000},  # 09:00 - 17:00
-    "BCD": {"start_offset": 32400000, "end_offset": 61200000},  # 09:00 - 17:00
-    "MCX": {"start_offset": 32400000, "end_offset": 86100000},  # 09:00 - 23:55
-    "NCO": {"start_offset": 32400000, "end_offset": 86100000},  # 09:00 - 23:55 (NSE Commodities mirrors MCX)
-    "CRYPTO": {"start_offset": 0, "end_offset": 86399000},  # 00:00 - 23:59:59 (24/7)
+    "NSE": {"start_offset": 33300000, "end_offset": 55800000, "type": "REGULAR"},  # 09:15 - 15:30
+    "BSE": {"start_offset": 33300000, "end_offset": 55800000, "type": "REGULAR"},  # 09:15 - 15:30
+    "NFO": {"start_offset": 33300000, "end_offset": 56400000, "type": "REGULAR"},  # 09:15 - 15:40
+    "BFO": {"start_offset": 33300000, "end_offset": 56400000, "type": "REGULAR"},  # 09:15 - 15:40
+    "CDS": {"start_offset": 32400000, "end_offset": 61200000, "type": "REGULAR"},  # 09:00 - 17:00
+    "BCD": {"start_offset": 32400000, "end_offset": 61200000, "type": "REGULAR"},  # 09:00 - 17:00
+    "MCX": {"start_offset": 32400000, "end_offset": 86100000, "type": "REGULAR"},  # 09:00 - 23:55
+    "NCO": {"start_offset": 32400000, "end_offset": 86100000, "type": "REGULAR"},  # 09:00 - 23:55
+    
+    # US Equities: Core regular hours (09:30 - 16:00)
+    "US": {
+        "start_offset": 34200000, 
+        "end_offset": 57600000,
+        "type": "REGULAR",
+        "extended_sessions": {
+            "pre_market": {"start_offset": 14400000, "end_offset": 34200000},   # 04:00 - 09:30
+            "post_market": {"start_offset": 57600000, "end_offset": 72000000}   # 16:00 - 20:00
+        }
+    },
+    
+    # OPRA Options: Core regular hours (09:30 - 16:00, with ETF extension to 16:15)
+    "OPRA": {
+        "start_offset": 34200000, 
+        "end_offset": 58500000,
+        "type": "REGULAR",
+        "extended_sessions": {
+            "etf_extended": {"start_offset": 57600000, "end_offset": 58500000}   # 16:00 - 16:15
+        }
+    },
+    
+    "CRYPTO": {"start_offset": 0, "end_offset": 86399000, "type": "24_7"},
 }
-
 
 class Holiday(Base):
     """
@@ -193,7 +213,7 @@ def seed_holidays_2025():
             "date": "2025-04-18",
             "description": "Good Friday",
             "holiday_type": "TRADING_HOLIDAY",
-            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX"],
+            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX", "US", "OPRA"],
             "open": [],
         },
         # May
@@ -291,7 +311,7 @@ def seed_holidays_2025():
             "date": "2025-12-25",
             "description": "Christmas",
             "holiday_type": "TRADING_HOLIDAY",
-            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX"],
+            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX", "US", "OPRA"],
             "open": [],
         },
     ]
@@ -362,7 +382,7 @@ def seed_holidays_2026():
             "date": "2026-04-03",
             "description": "Good Friday",
             "holiday_type": "TRADING_HOLIDAY",
-            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX"],
+            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX", "US", "OPRA"],
             "open": [],
         },
         {
@@ -471,8 +491,40 @@ def seed_holidays_2026():
             "date": "2026-12-25",
             "description": "Christmas",
             "holiday_type": "TRADING_HOLIDAY",
-            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX"],
+            "closed": ["NSE", "BSE", "NFO", "BFO", "CDS", "BCD", "MCX", "US", "OPRA"],
             "open": [],
+        },
+        
+        # --- US & OPRA Holidays 2026 ---
+        {"date": "2026-01-01", "description": "New Year's Day", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        {"date": "2026-01-19", "description": "Martin Luther King, Jr. Day", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        {"date": "2026-02-16", "description": "Presidents' Day", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        {"date": "2026-05-25", "description": "Memorial Day", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        {"date": "2026-06-19", "description": "Juneteenth", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        {"date": "2026-07-03", "description": "Independence Day (Observed)", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        {"date": "2026-09-07", "description": "Labor Day", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        {"date": "2026-11-26", "description": "Thanksgiving Day", "holiday_type": "TRADING_HOLIDAY", "closed": ["US", "OPRA"], "open": []},
+        
+        # US Early Closes (Closes at 13:00 ET for Equities, 13:15 ET for OPRA ETFs)
+        {
+            "date": "2026-11-27",
+            "description": "Day After Thanksgiving (Early Close)",
+            "holiday_type": "TRADING_HOLIDAY",
+            "closed": [],
+            "open": [
+                {"exchange": "US", "start_time": int(IST.localize(datetime(2026, 11, 27, 9, 30)).timestamp() * 1000), "end_time": int(IST.localize(datetime(2026, 11, 27, 13, 0)).timestamp() * 1000)},
+                {"exchange": "OPRA", "start_time": int(IST.localize(datetime(2026, 11, 27, 9, 30)).timestamp() * 1000), "end_time": int(IST.localize(datetime(2026, 11, 27, 13, 15)).timestamp() * 1000)},
+            ],
+        },
+        {
+            "date": "2026-12-24",
+            "description": "Christmas Eve (Early Close)",
+            "holiday_type": "TRADING_HOLIDAY",
+            "closed": [],
+            "open": [
+                {"exchange": "US", "start_time": int(IST.localize(datetime(2026, 12, 24, 9, 30)).timestamp() * 1000), "end_time": int(IST.localize(datetime(2026, 12, 24, 13, 0)).timestamp() * 1000)},
+                {"exchange": "OPRA", "start_time": int(IST.localize(datetime(2026, 12, 24, 9, 30)).timestamp() * 1000), "end_time": int(IST.localize(datetime(2026, 12, 24, 13, 15)).timestamp() * 1000)},
+            ],
         },
     ]
 
@@ -599,43 +651,36 @@ def _get_timing_offsets() -> dict[str, dict[str, int]]:
     return DEFAULT_MARKET_TIMINGS
 
 
-def get_market_timings_for_date(query_date: date) -> list[dict[str, Any]]:
+def get_market_timings_for_date(query_date, include_extended: bool = True) -> list[dict[str, Any]]:
     """
-    Get market timings for a specific date
-    Returns empty list if it's a full holiday for all exchanges
-    Returns special session timings for Muhurat trading etc.
-
-    Args:
-        query_date: The date to get timings for
-
-    Returns:
-        List of exchange timings with start_time and end_time in epoch milliseconds
+    Get market timings for a specific date. 
+    Intelligently handles regular hours, holidays, and adjusts extended sessions on early close days.
     """
-    cache_key = f"timings_{query_date.isoformat()}"
+    if isinstance(query_date, str):
+        try:
+            query_date = datetime.strptime(query_date, "%Y-%m-%d").date()
+        except ValueError:
+            return []
+    elif isinstance(query_date, datetime):
+        query_date = query_date.date()
+    elif not isinstance(query_date, date):
+        return []
 
-    # Check cache first
+    cache_key = f"timings_{query_date.isoformat()}_ext_{include_extended}"
     if cache_key in _timings_cache:
         return _timings_cache[cache_key]
 
     try:
-        # Calculate midnight timestamp for the date in IST
-        midnight_ist = datetime.combine(query_date, datetime.min.time())
+        midnight_ist = IST.localize(datetime.combine(query_date, datetime.min.time()))
         midnight_epoch = int(midnight_ist.timestamp() * 1000)
-
-        # Get timing offsets from database (or defaults if not in DB)
         timing_offsets = _get_timing_offsets()
-
-        # Check if it's a holiday/special session FIRST (before weekend check)
-        # This allows special sessions like Budget Day or Muhurat Trading on weekends
+        
         holiday = Holiday.query.filter(Holiday.holiday_date == query_date).first()
+        closed_exchanges = set()
+        open_with_timings = {}
 
         if holiday:
-            # Get exchange-specific information
             exchanges = HolidayExchange.query.filter(HolidayExchange.holiday_id == holiday.id).all()
-
-            closed_exchanges = set()
-            open_with_timings = {}
-
             for ex in exchanges:
                 if ex.is_open:
                     open_with_timings[ex.exchange_code] = {
@@ -646,68 +691,74 @@ def get_market_timings_for_date(query_date: date) -> list[dict[str, Any]]:
                 else:
                     closed_exchanges.add(ex.exchange_code)
 
-            # For SPECIAL_SESSION (like Muhurat), return the special timings
-            if holiday.holiday_type == "SPECIAL_SESSION":
-                result = list(open_with_timings.values())
-                _timings_cache[cache_key] = result
-                return result
-
-            # For SETTLEMENT_HOLIDAY, trading is open with normal hours
-            if holiday.holiday_type == "SETTLEMENT_HOLIDAY":
-                result = []
-                for exchange in SUPPORTED_EXCHANGES:
-                    timings = timing_offsets.get(exchange, DEFAULT_MARKET_TIMINGS.get(exchange, {}))
-                    if timings:
-                        result.append(
-                            {
-                                "exchange": exchange,
-                                "start_time": midnight_epoch + timings["start_offset"],
-                                "end_time": midnight_epoch + timings["end_offset"],
-                            }
-                        )
-                _timings_cache[cache_key] = result
-                return result
-
-            # For regular TRADING_HOLIDAY, if all exchanges are closed, return empty
-            if closed_exchanges == set(SUPPORTED_EXCHANGES) and not open_with_timings:
-                _timings_cache[cache_key] = []
-                return []
-
-            # Build result with open exchanges only (closed exchanges not included)
-            result = list(open_with_timings.values())
-            _timings_cache[cache_key] = result
-            return result
-
-        # No holiday entry found - on weekends only crypto trades.
-        # Weekend check is done AFTER holiday check so special sessions
-        # on weekends (e.g., Sunday Muhurat) are honored above.
-        if query_date.weekday() >= 5:
-            crypto_only = []
-            for exch in CRYPTO_EXCHANGES:
-                timings = timing_offsets.get(exch, DEFAULT_MARKET_TIMINGS.get(exch, {}))
-                if timings:
-                    crypto_only.append(
-                        {
-                            "exchange": exch,
-                            "start_time": midnight_epoch + timings["start_offset"],
-                            "end_time": midnight_epoch + timings["end_offset"],
-                        }
-                    )
-            _timings_cache[cache_key] = crypto_only
-            return crypto_only
-
-        # Normal trading day - return timings for all exchanges from DB
+        is_weekend = query_date.weekday() >= 5
         result = []
+
         for exchange in SUPPORTED_EXCHANGES:
-            timings = timing_offsets.get(exchange, DEFAULT_MARKET_TIMINGS.get(exchange, {}))
-            if timings:
-                result.append(
-                    {
+            if exchange in closed_exchanges:
+                continue
+
+            # Check if there is an explicit holiday override (e.g., Early Close)
+            if exchange in open_with_timings:
+                spec = open_with_timings[exchange]
+                spec_start = spec.get("start_time")
+                spec_end = spec.get("end_time")
+                
+                if spec_start is not None and spec_end is not None:
+                    # 1. Regular Early Close Session
+                    result.append({
                         "exchange": exchange,
-                        "start_time": midnight_epoch + timings["start_offset"],
-                        "end_time": midnight_epoch + timings["end_offset"],
-                    }
-                )
+                        "session": "REGULAR",
+                        "start_time": spec_start,
+                        "end_time": spec_end,
+                    })
+                    
+                    # 2. Pre-market on early close days (04:00 AM up to regular open 09:30 AM)
+                    if include_extended and exchange == "US":
+                        standard_open_epoch = midnight_epoch + 34200000 # 09:30 AM
+                        pre_start_epoch = midnight_epoch + 14400000     # 04:00 AM
+                        if spec_start >= standard_open_epoch:
+                            result.append({
+                                "exchange": exchange,
+                                "session": "PRE_MARKET",
+                                "start_time": pre_start_epoch,
+                                "end_time": standard_open_epoch,
+                            })
+                            
+                        # Early Post-market on US early close days (e.g., 13:00 to 17:00 ET)
+                        early_post_end = spec_end + (4 * 3600000) # 4 hours after early close (17:00 ET)
+                        result.append({
+                            "exchange": exchange,
+                            "session": "POST_MARKET",
+                            "start_time": spec_end,
+                            "end_time": early_post_end,
+                        })
+                continue
+
+            if is_weekend and exchange not in CRYPTO_EXCHANGES:
+                continue
+
+            timing_config = DEFAULT_MARKET_TIMINGS.get(exchange, {})
+            start_off = timing_config.get("start_offset", 34200000)
+            end_off = timing_config.get("end_offset", 57600000)
+
+            # Standard Regular Session
+            result.append({
+                "exchange": exchange,
+                "session": "REGULAR",
+                "start_time": midnight_epoch + start_off,
+                "end_time": midnight_epoch + end_off,
+            })
+
+            # Standard Extended Sessions
+            if include_extended and "extended_sessions" in timing_config:
+                for sess_name, sess_range in timing_config["extended_sessions"].items():
+                    result.append({
+                        "exchange": exchange,
+                        "session": sess_name.upper(),
+                        "start_time": midnight_epoch + sess_range["start_offset"],
+                        "end_time": midnight_epoch + sess_range["end_offset"],
+                    })
 
         _timings_cache[cache_key] = result
         return result
@@ -715,8 +766,7 @@ def get_market_timings_for_date(query_date: date) -> list[dict[str, Any]]:
     except Exception as e:
         logger.exception(f"Error fetching market timings for {query_date}: {e}")
         return []
-
-
+    
 def get_special_session(query_date: date, exchange: str) -> Optional[Dict[str, Any]]:
     """
     Return the SPECIAL_SESSION window for (date, exchange) if one exists and
@@ -1068,10 +1118,13 @@ def migrate_fo_close_for_cas():
 
 
 def seed_market_timings():
-    """Seed default market timings if table is empty"""
+    """Seed default market timings for any missing exchanges"""
     try:
-        if MarketTiming.query.count() == 0:
-            for exchange, timings in DEFAULT_MARKET_TIMINGS.items():
+        updated = False
+        for exchange, timings in DEFAULT_MARKET_TIMINGS.items():
+            # Check if this specific exchange already exists in the database
+            existing = MarketTiming.query.filter_by(exchange_code=exchange).first()
+            if not existing:
                 start_offset = timings["start_offset"]
                 end_offset = timings["end_offset"]
 
@@ -1089,13 +1142,15 @@ def seed_market_timings():
                     end_offset=end_offset,
                 )
                 db_session.add(timing)
+                updated = True
 
+        if updated:
             db_session.commit()
-            logger.debug("Market Calendar DB: Market timings seeded successfully")
+            clear_market_calendar_cache()
+            logger.info("Market Calendar DB: Added missing market timings to database")
     except Exception as e:
         db_session.rollback()
-        logger.debug(f"Market Calendar DB: Timing seeding may have race condition: {e}")
-
+        logger.debug(f"Market Calendar DB: Timing seeding error: {e}")
 
 def get_all_market_timings() -> list[dict[str, Any]]:
     """Get all market timings from database or defaults"""

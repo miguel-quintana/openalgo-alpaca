@@ -37,7 +37,7 @@ logger = get_logger(__name__)
 
 postback_bp = Blueprint("postback_bp", __name__, url_prefix="/postback")
 
-SUPPORTED_BROKERS = {"zerodha", "dhan", "fyers", "upstox", "angel", "aliceblue"}
+SUPPORTED_BROKERS = {"alpaca","zerodha", "dhan", "fyers", "upstox", "angel", "aliceblue"}
 
 # Dhan REST-postback vocabulary differs from its order-WS single-letter codes
 # (12-postback.md: full-word product/orderType). Everything else reuses the

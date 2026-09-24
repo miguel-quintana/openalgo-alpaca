@@ -163,25 +163,33 @@ _install_connection_factory()
 
 @event.listens_for(Engine, "connect")
 def _set_sqlite_pragmas(dbapi_connection, connection_record):
-    """Apply WAL + synchronous=NORMAL + busy_timeout to every SQLite connection."""
-    if not isinstance(dbapi_connection, sqlite3.Connection):
-        return
-    cursor = dbapi_connection.cursor()
-    try:
-        # A pragma failure must never break the connection: if another
-        # process holds a legacy-mode lock during first-time conversion the
-        # connection simply continues in the journal mode already on disk.
+    # Ensure it doesn't break PostgreSQL connections
+    if Engine.name == "sqlite":
+        """Apply WAL + synchronous=NORMAL + busy_timeout to every SQLite connection."""
+        if not isinstance(dbapi_connection, sqlite3.Connection):
+            return
+        cursor = dbapi_connection.cursor()
         try:
-            cursor.execute("PRAGMA journal_mode=WAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            cursor.execute("PRAGMA synchronous=NORMAL")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        except sqlite3.OperationalError:
-            pass
-    finally:
-        cursor.close()
+            # A pragma failure must never break the connection: if another
+            # process holds a legacy-mode lock during first-time conversion the
+            # connection simply continues in the journal mode already on disk.
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("PRAGMA synchronous=NORMAL")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            except sqlite3.OperationalError:
+                pass
+        finally:
+            cursor.close()
+    elif Engine.name == "postgresql":
+        # Optional: Apply PostgreSQL specific optimization parameters here if needed
+        pass
+    else:
+        #logger.warning(f"Database engine {Engine.name} is not specifically optimized in this code.")
+        pass

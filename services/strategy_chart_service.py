@@ -22,6 +22,7 @@ the scale). Timestamps missing for any active leg are dropped.
 from datetime import date, datetime, timedelta
 
 import pandas as pd
+import os
 import pytz
 
 from services.history_service import get_history
@@ -143,7 +144,7 @@ def _cap_last_n_trading_dates(series: list[dict], n: int, ist_tz: pytz.BaseTzInf
 
 def _convert_timestamp_to_ist(df: pd.DataFrame) -> pd.DataFrame | None:
     """Normalize a history dataframe's timestamp column to an IST datetime index."""
-    ist = pytz.timezone("Asia/Kolkata")
+    ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     try:
         if "timestamp" not in df.columns:
             logger.warning("No timestamp field in history data")
@@ -235,7 +236,7 @@ def get_strategy_chart_data(
         Tuple of (success: bool, response: dict, status_code: int).
     """
     try:
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         try:
             explicit = _resolve_explicit_window(start_date, end_date, ist)
         except ValueError as exc:

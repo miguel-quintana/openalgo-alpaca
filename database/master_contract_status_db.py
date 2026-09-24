@@ -17,7 +17,7 @@ DOWNLOAD_TIMEOUT_MINUTES = 5
 DB_PATH = os.getenv("DATABASE_URL", "sqlite:///db/openalgo.db")
 
 # Ensure the directory exists
-os.makedirs(os.path.dirname(DB_PATH.replace("sqlite:///", "")), exist_ok=True)
+# os.makedirs(os.path.dirname(DB_PATH.replace("sqlite:///", "")), exist_ok=True)
 
 # Create the engine and session
 # Conditionally create engine based on DB type

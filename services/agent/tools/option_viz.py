@@ -124,6 +124,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import os
 import pytz
 
 from services import history_service, quotes_service, symbol_service
@@ -333,7 +334,7 @@ _NO_SINK_PAYOFF = no_sink_message("payoff diagram")
 #: The window helpers in ``strategy_chart_service`` take a pytz zone, which is
 #: what ``straddle_chart_service`` hands them, so the fixed-leg series is framed
 #: by exactly the same calendar as the rolling one.
-_IST_PYTZ = pytz.timezone("Asia/Kolkata")
+_IST_PYTZ = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 #: Legs named in a chart heading before it stops being a heading.
 _MAX_HEADING_LEGS = 3
@@ -1522,7 +1523,7 @@ class OptionVizToolkit(OpenAlgoToolkit):
             "currency": CURRENCY,
             "mode": current_mode(self.analyzer_mode),
             "as_of": datetime.now(IST).isoformat(timespec="seconds"),
-            "timezone": "Asia/Kolkata",
+            "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
             "legs": resolved,
         }
         if excluded:

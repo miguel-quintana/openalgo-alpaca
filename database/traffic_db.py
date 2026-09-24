@@ -557,7 +557,8 @@ def init_logs_db():
     db_path = LOGS_DATABASE_URL.replace("sqlite:///", "")
     db_dir = os.path.dirname(db_path)
     if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+        #os.makedirs(db_dir, exist_ok=True)
+        pass
 
     from database.db_init_helper import init_db_with_logging
 

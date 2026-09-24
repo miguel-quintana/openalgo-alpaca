@@ -8,7 +8,7 @@ import {
   Filter,
   Users,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -75,12 +75,28 @@ const EXCHANGE_COLORS: Record<string, string> = {
 }
 
 export default function Analyzer() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
   const [data, setData] = useState<AnalyzerData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [selectedRequest, setSelectedRequest] = useState<ApiRequest | null>(null)
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
+
+  const formatDateTime = useCallback((isoString: string) => {
+    if (!isoString) return ''
+    try {
+      return new Intl.DateTimeFormat(LOCALE, {
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+        timeZone: TIMEZONE,
+      }).format(new Date(isoString))
+    } catch (e) {
+      return isoString
+    }
+  }, [LOCALE, TIMEZONE])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: one-time data load on mount; subsequent fetches are triggered explicitly by the filter form
   useEffect(() => {
@@ -308,12 +324,9 @@ export default function Analyzer() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  requests.map((request, index) => (
+                 requests.map((request, index) => (
                     <TableRow key={index} className="hover:bg-muted/50">
-                      <TableCell className="text-sm">{request.timestamp}</TableCell>
-                      <TableCell>
-                        <Badge variant="default">{request.api_type}</Badge>
-                      </TableCell>
+                      <TableCell className="text-sm">{formatDateTime(request.timestamp)}</TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="truncate max-w-[120px]">
                           {request.source}

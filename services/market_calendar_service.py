@@ -4,6 +4,7 @@ Market Calendar Service
 Handles business logic for market holidays and timings API
 """
 
+import os
 from datetime import date, datetime
 from typing import Any
 
@@ -50,7 +51,7 @@ def get_holidays(year: int | None = None) -> tuple[bool, dict[str, Any], int]:
 
         return (
             True,
-            {"status": "success", "year": year, "timezone": "Asia/Kolkata", "data": holidays},
+            {"status": "success", "year": year, "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"), "data": holidays},
             200,
         )
 
@@ -63,7 +64,7 @@ def get_holidays(year: int | None = None) -> tuple[bool, dict[str, Any], int]:
         )
 
 
-def get_timings(date_str: str) -> tuple[bool, dict[str, Any], int]:
+def get_timings(date_str: str, include_extended: bool = True) -> tuple[bool, dict[str, Any], int]:
     """
     Get market timings for a specific date
 
@@ -89,7 +90,7 @@ def get_timings(date_str: str) -> tuple[bool, dict[str, Any], int]:
 
         logger.info(f"Fetching market timings for date: {date_str}")
 
-        timings = get_market_timings_for_date(query_date)
+        timings = get_market_timings_for_date(query_date, include_extended=include_extended)
 
         return True, {"status": "success", "data": timings}, 200
 

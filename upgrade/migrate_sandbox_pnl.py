@@ -99,11 +99,31 @@ def add_today_realized_pnl_columns(conn):
 
     logger.info("Checking for today_realized_pnl columns...")
 
-    # Check and add today_realized_pnl to sandbox_positions if missing
-    result = conn.execute(text("PRAGMA table_info(sandbox_positions)"))
-    columns = [row[1] for row in result]
+    # Identify the active database dialect
+    dialect = conn.engine.name
+    if dialect not in ("sqlite", "postgresql"):
+        logger.warning(f"Unsupported database engine for migration: {dialect}")
+        return
 
-    if "today_realized_pnl" not in columns:
+    # Helper function to dynamically fetch column names
+    def get_columns(table_name):
+        if dialect == "sqlite":
+            result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+            return [row for row in result]
+        else:  # postgresql
+            result = conn.execute(
+                text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = :table
+                """),
+                {"table": table_name}
+            )
+            return [row for row in result]
+
+    # Check and add today_realized_pnl to sandbox_positions if missing
+    columns_positions = get_columns("sandbox_positions")
+    if "today_realized_pnl" not in columns_positions:
         conn.execute(
             text("""
             ALTER TABLE sandbox_positions
@@ -115,10 +135,8 @@ def add_today_realized_pnl_columns(conn):
         logger.info("today_realized_pnl column already exists in sandbox_positions")
 
     # Check and add today_realized_pnl to sandbox_funds if missing
-    result = conn.execute(text("PRAGMA table_info(sandbox_funds)"))
-    columns = [row[1] for row in result]
-
-    if "today_realized_pnl" not in columns:
+    columns_funds = get_columns("sandbox_funds")
+    if "today_realized_pnl" not in columns_funds:
         conn.execute(
             text("""
             ALTER TABLE sandbox_funds
@@ -165,14 +183,33 @@ def status():
         engine = get_sandbox_db_engine()
 
         with engine.connect() as conn:
-            # Check today_realized_pnl in sandbox_positions
-            result = conn.execute(text("PRAGMA table_info(sandbox_positions)"))
-            positions_columns = [row[1] for row in result]
+            # 1. Adapt column checking logic based on the engine dialect
+            if engine.name == "sqlite":
+                result_pos = conn.execute(text("PRAGMA table_info(sandbox_positions)"))
+                positions_columns = [row[1] for row in result_pos]
 
-            # Check today_realized_pnl in sandbox_funds
-            result = conn.execute(text("PRAGMA table_info(sandbox_funds)"))
-            funds_columns = [row[1] for row in result]
+                result_funds = conn.execute(text("PRAGMA table_info(sandbox_funds)"))
+                funds_columns = [row[1] for row in result_funds]
 
+            elif engine.name == "postgresql":
+                # PostgreSQL standard lookup via safe bound parameters
+                query = text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = :table
+                """)
+                
+                result_pos = conn.execute(query, {"table": "sandbox_positions"})
+                positions_columns = [row[0] for row in result_pos]
+
+                result_funds = conn.execute(query, {"table": "sandbox_funds"})
+                funds_columns = [row[0] for row in result_funds]
+                
+            else:
+                logger.error(f"Unsupported database engine for status check: {engine.name}")
+                return False
+
+            # 2. Evaluate missing state definitions
             missing = []
             if "today_realized_pnl" not in positions_columns:
                 missing.append("sandbox_positions.today_realized_pnl")

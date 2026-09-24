@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from sandbox.session_boundary import last_session_expiry_utc  # noqa: E402
 
-IST = ZoneInfo("Asia/Kolkata")
+IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 NY = ZoneInfo("America/New_York")
 
 

@@ -314,6 +314,8 @@ export function ChartPane({
   railVisible,
   layoutPicker,
 }: Props) {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+  
   const chartRef = useRef<HTMLDivElement>(null)
   const legendRef = useRef<HTMLDivElement>(null)
   /**
@@ -571,6 +573,10 @@ export function ChartPane({
         owner.setArmed(armedRef.current && !lockedRef.current)
         terminalCbRef.current?.(paneId, owner)
         owner.setLinkGroup(linkGroup ?? null)
+      
+        // Enforce the configured .env timezone on the chart axes
+        void owner.applyChartSettings({ 'axes.timezone': TIMEZONE })
+      
         void owner
           .init()
           .then(() => {

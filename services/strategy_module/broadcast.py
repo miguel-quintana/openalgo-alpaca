@@ -122,7 +122,7 @@ EVENT_TERMINAL = "strategy_terminal"
 #: Every trading time in this product is IST. Same zone the scheduler and the
 #: signal path use, so a timestamp in a broadcast and one in an event row read
 #: the same way.
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 def _delta_interval_seconds() -> float:

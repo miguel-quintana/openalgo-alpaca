@@ -57,6 +57,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import os
 from zoneinfo import ZoneInfo
 
 from werkzeug.utils import secure_filename
@@ -78,7 +79,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = get_logger(__name__)
 
-IST = ZoneInfo("Asia/Kolkata")
+IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 #: Where /python reads its scripts from. Relative, exactly as
 #: blueprints/python_strategy.py declares it, so both resolve to the same

@@ -28,7 +28,7 @@ from utils.session import get_session_expiry_time, set_session_login_time
 logger = get_logger(__name__)
 
 # Timezones
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 UTC = pytz.utc
 
 

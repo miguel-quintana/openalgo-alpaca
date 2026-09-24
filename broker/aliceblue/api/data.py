@@ -762,7 +762,7 @@ class BrokerData:
                 """
                 import pytz
 
-                ist = pytz.timezone("Asia/Kolkata")
+                ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
                 logger.debug(
                     f"Converting timestamp: {timestamp} (type: {type(timestamp)}, is_end_date: {is_end_date})"
@@ -981,7 +981,7 @@ class BrokerData:
                 # same broker.
                 import pytz as _pytz_daily
 
-                _ist_daily = _pytz_daily.timezone("Asia/Kolkata")
+                _ist_daily = _pytz_daily.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
                 df["timestamp"] = df["timestamp"].dt.normalize()
                 df["timestamp"] = df["timestamp"].dt.tz_localize(_ist_daily)
                 df["timestamp"] = df["timestamp"].astype("int64") // 10**9
@@ -992,7 +992,7 @@ class BrokerData:
 
                 # AliceBlue timestamps are in IST - localize them for correct epoch conversion
                 import pytz
-                ist = pytz.timezone("Asia/Kolkata")
+                ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
                 df["timestamp"] = df["timestamp"].dt.tz_localize(ist)
 
                 # Convert to Unix epoch (seconds since 1970)
@@ -1024,7 +1024,7 @@ class BrokerData:
                 try:
                     # Convert timestamp back to datetime for resampling
                     import pytz as _pytz2
-                    _ist2 = _pytz2.timezone("Asia/Kolkata")
+                    _ist2 = _pytz2.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
                     df["dt"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_convert(_ist2)
                     df = df.set_index("dt")
 

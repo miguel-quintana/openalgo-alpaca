@@ -56,8 +56,11 @@ import { PANEL_HEADER, PanelShell } from './panelShell'
 /** Survives a reload so the panel reopens on the contract the user was watching. */
 const PREFS_KEY = 'oa-trading-optionchain'
 
+const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
 /** Derivative segments that carry an option chain. */
-const EXCHANGES = ['NFO', 'BFO', 'MCX', 'CDS'] as const
+const EXCHANGES = ['NFO', 'BFO', 'MCX', 'CDS', 'US', 'OPRA'] as const
 type Exchange = (typeof EXCHANGES)[number]
 
 /**
@@ -751,14 +754,14 @@ export function OptionChainPanel({ apiKey, onPick, activeSymbol }: Props) {
       {rows.length > 0 &&
         (chainError && lastUpdate ? (
           <p className="shrink-0 border-t px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400">
-            Not updating. Last loaded {lastUpdate.toLocaleTimeString()}
+            Not updating. Last loaded {lastUpdate.toLocaleTimeString(LOCALE, { timeZone: TIMEZONE })}
           </p>
         ) : marketOpen && !isStreaming && lastUpdate ? (
           // Streaming is the point of this panel. If the socket is not up the
           // numbers are still refreshed by the structural poll, just far more
           // slowly, and saying so beats letting them read as live.
           <p className="shrink-0 border-t px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400">
-            Not streaming. Last update {lastUpdate.toLocaleTimeString()}
+            Not streaming. Last update {lastUpdate.toLocaleTimeString(LOCALE, { timeZone: TIMEZONE })}
           </p>
         ) : !marketOpen ? (
           // The panel already backs the poll off to a minute when the market is

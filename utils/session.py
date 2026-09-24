@@ -29,7 +29,7 @@ def get_session_expiry_time():
         return timedelta(days=365)
 
     now_utc = datetime.now(pytz.timezone("UTC"))
-    now_ist = now_utc.astimezone(pytz.timezone("Asia/Kolkata"))
+    now_ist = now_utc.astimezone(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
     # Get configured expiry time or default to 3 AM
     expiry_time = os.getenv("SESSION_EXPIRY_TIME", "03:00")
@@ -49,7 +49,7 @@ def get_session_expiry_time():
 def set_session_login_time():
     """Set the session login time in IST"""
     now_utc = datetime.now(pytz.timezone("UTC"))
-    now_ist = now_utc.astimezone(pytz.timezone("Asia/Kolkata"))
+    now_ist = now_utc.astimezone(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
     session["login_time"] = now_ist.isoformat()
     logger.info(f"Session login time set to: {now_ist}")
 
@@ -71,7 +71,7 @@ def is_session_valid():
         return True
 
     now_utc = datetime.now(pytz.timezone("UTC"))
-    now_ist = now_utc.astimezone(pytz.timezone("Asia/Kolkata"))
+    now_ist = now_utc.astimezone(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
     # Parse login time
     login_time = datetime.fromisoformat(session["login_time"])
@@ -103,7 +103,7 @@ def _todays_rollover_boundary(now_ist=None):
     two reads that could straddle the boundary.
     """
     if now_ist is None:
-        now_ist = datetime.now(pytz.timezone("UTC")).astimezone(pytz.timezone("Asia/Kolkata"))
+        now_ist = datetime.now(pytz.timezone("UTC")).astimezone(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
     expiry_time = os.getenv("SESSION_EXPIRY_TIME", "03:00")
     hour, minute = map(int, expiry_time.split(":"))
     return now_ist.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -119,7 +119,7 @@ def get_trading_session_date():
     ``date.today()`` - which is also the server's local date and may not be IST
     at all on a host outside India.
     """
-    now_ist = datetime.now(pytz.timezone("UTC")).astimezone(pytz.timezone("Asia/Kolkata"))
+    now_ist = datetime.now(pytz.timezone("UTC")).astimezone(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
     boundary = _todays_rollover_boundary(now_ist)
     if now_ist < boundary:
         return (now_ist - timedelta(days=1)).date().isoformat()
@@ -139,7 +139,7 @@ def _has_fresher_session(username, current_session_id=None):
         from database.auth_db import get_active_sessions
 
         boundary = _todays_rollover_boundary()
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         for sess in get_active_sessions(username):
             if current_session_id and sess.get("session_id") == current_session_id:
                 continue

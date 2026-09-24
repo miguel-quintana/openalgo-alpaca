@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+import os
 import pytz
 from flask import Flask
 
@@ -86,7 +87,7 @@ def _log_in(client, username=USER):
     with client.session_transaction() as flask_session:
         flask_session["logged_in"] = True
         flask_session["user"] = username
-        flask_session["login_time"] = datetime.now(pytz.timezone("Asia/Kolkata")).isoformat()
+        flask_session["login_time"] = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))).isoformat()
 
 
 @pytest.fixture

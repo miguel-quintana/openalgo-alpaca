@@ -54,7 +54,7 @@ import { useLivePrice } from '@/hooks/useLivePrice'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import { usePageVisibility } from '@/hooks/usePageVisibility'
 import { useSupportedExchanges } from '@/hooks/useSupportedExchanges'
-import { cn, makeFormatCurrency, sanitizeCSV } from '@/lib/utils'
+import { cn, sanitizeCSV } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { onModeChange } from '@/stores/themeStore'
 import type { Position } from '@/types/trading'
@@ -136,6 +136,8 @@ const EXCHANGE_COLORS: Record<string, string> = {
   NSE_INDEX: 'bg-cyan-500/20 text-cyan-600 border-cyan-500/30',
   BSE_INDEX: 'bg-slate-500/20 text-slate-600 border-slate-500/30',
   GLOBAL_INDEX: 'bg-indigo-500/20 text-indigo-600 border-indigo-500/30',
+  US: 'bg-blue-500/20 text-blue-600 border-blue-500/30',
+  OPRA: 'bg-fuchsia-500/20 text-fuchsia-600 border-fuchsia-500/30',
 }
 
 const PRODUCT_COLORS: Record<string, string> = {
@@ -145,9 +147,29 @@ const PRODUCT_COLORS: Record<string, string> = {
 }
 
 export default function Positions() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
   const { apiKey, user } = useAuthStore()
   const { isCrypto } = useSupportedExchanges()
-  const formatCurrency = useMemo(() => makeFormatCurrency(user?.broker), [user?.broker])
+  
+  const formatCurrency = useMemo(() => {
+    const isUSBroker = ['schwab', 'alpaca', 'tradier'].includes(user?.broker?.toLowerCase() || '')
+    const currency = import.meta.env.VITE_APP_CURRENCY || (isUSBroker ? 'USD' : 'INR')
+
+    return (value: number) => {
+      // Expand to 4 decimal places if the value has sub-penny precision
+      const maxDecimals = Math.abs(value * 100) % 1 !== 0 ? 4 : 2
+
+      return new Intl.NumberFormat(LOCALE, {
+        style: 'currency',
+        currency: currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: maxDecimals,
+      }).format(value)
+    }
+  }, [user?.broker, LOCALE])
+
   const [positions, setPositions] = useState<Position[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -505,7 +527,13 @@ export default function Positions() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      const filename = `positions_${new Date().toISOString().split('T')[0]}.csv`
+      
+      // Format date as YYYY-MM-DD strictly honoring the configured timezone
+      const dateStr = new Intl.DateTimeFormat('en-CA', { 
+        timeZone: TIMEZONE 
+      }).format(new Date())
+      
+      const filename = `positions_${dateStr}.csv`
       a.download = filename
       a.click()
       // Revoke the object URL to free memory
@@ -725,6 +753,8 @@ export default function Positions() {
                     <FilterChip type="exchange" value="BFO" label="BFO" />
                     <FilterChip type="exchange" value="MCX" label="MCX" />
                     <FilterChip type="exchange" value="CDS" label="CDS" />
+                    <FilterChip type="exchange" value="US" label="US" />
+                    <FilterChip type="exchange" value="OPRA" label="OPRA" />
                   </div>
                 </div>
               </div>

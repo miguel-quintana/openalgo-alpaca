@@ -113,7 +113,7 @@ def get_session_based_cache_ttl():
 
         # Calculate time until next session expiry
         now_utc = datetime.now(pytz.timezone("UTC"))
-        now_ist = now_utc.astimezone(pytz.timezone("Asia/Kolkata"))
+        now_ist = now_utc.astimezone(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
         # Today's expiry time
         today_expiry = now_ist.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -132,7 +132,7 @@ def get_session_based_cache_ttl():
         ttl_seconds = max(300, min(time_until_expiry, 24 * 3600))
 
         logger.debug(
-            f"Auth cache TTL set to {ttl_seconds} seconds until session expiry at {today_expiry.strftime('%H:%M IST')}"
+            f"Auth cache TTL set to {ttl_seconds} seconds until session expiry at {today_expiry.strftime('%H:%M:%S %Z')} {os.getenv("TIMEZONE", "Asia/Kolkata")}"
         )
         return int(ttl_seconds)
 
@@ -266,7 +266,7 @@ def _now_ist():
     from datetime import datetime
 
     import pytz
-    return datetime.now(pytz.timezone("Asia/Kolkata"))
+    return datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
 
 def log_login_attempt(username, ip_address=None, device_info=None, status="failed",

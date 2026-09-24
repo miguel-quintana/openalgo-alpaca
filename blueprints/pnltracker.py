@@ -6,6 +6,7 @@ from importlib import import_module
 
 import numpy as np
 import pandas as pd
+import os
 import pytz
 from flask import Blueprint, jsonify, redirect, render_template, request, session, url_for
 from flask_cors import cross_origin
@@ -22,17 +23,9 @@ logger = get_logger(__name__)
 def parse_trade_timestamp(timestamp_str, fallback_date=None):
     """
     Safely parse trade timestamp from various broker formats.
-
-    Supported formats:
-    - "17-Dec-2025 10:54:03" (AngelOne)
-    - "09:41:01 17-12-2025" (Flattrade)
-    - "10:30:52" (Time only)
-    - Unix timestamp (int/float)
-    - ISO format strings
-
-    Returns: timezone-aware datetime in IST, or None if parsing fails
+    Returns: timezone-aware datetime in configured timezone, or None if parsing fails
     """
-    ist = pytz.timezone("Asia/Kolkata")
+    local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
     if timestamp_str is None:
         return None
@@ -42,8 +35,8 @@ def parse_trade_timestamp(timestamp_str, fallback_date=None):
         try:
             dt = pd.to_datetime(timestamp_str, unit="s")
             if dt.tz is None:
-                return dt.tz_localize("UTC").tz_convert(ist)
-            return dt.tz_convert(ist)
+                return dt.tz_localize("UTC").tz_convert(local_tz)
+            return dt.tz_convert(local_tz)
         except Exception as e:
             logger.warning(f"Failed to parse numeric timestamp {timestamp_str}: {e}")
             return None
@@ -55,28 +48,26 @@ def parse_trade_timestamp(timestamp_str, fallback_date=None):
     if not timestamp_str:
         return None
 
-    # List of formats to try (order matters - more specific first)
     formats = [
-        "%d-%b-%Y %H:%M:%S",  # AngelOne: "17-Dec-2025 10:54:03"
-        "%H:%M:%S %d-%m-%Y",  # Flattrade: "09:41:01 17-12-2025"
-        "%d-%m-%Y %H:%M:%S",  # "17-12-2025 09:41:01"
-        "%Y-%m-%d %H:%M:%S",  # ISO-like: "2025-12-17 10:30:00"
-        "%Y-%m-%dT%H:%M:%S",  # ISO: "2025-12-17T10:30:00"
+        "%d-%b-%Y %H:%M:%S", 
+        "%H:%M:%S %d-%m-%Y", 
+        "%d-%m-%Y %H:%M:%S", 
+        "%Y-%m-%d %H:%M:%S", 
+        "%Y-%m-%dT%H:%M:%S", 
     ]
 
     for fmt in formats:
         try:
             dt = datetime.strptime(timestamp_str, fmt)
-            return ist.localize(dt)
+            return local_tz.localize(dt)
         except ValueError:
             continue
 
-    # Try time-only format: "HH:MM:SS"
     if ":" in timestamp_str and " " not in timestamp_str:
         try:
             time_parts = timestamp_str.split(":")
             if len(time_parts) >= 2 and len(time_parts[0]) <= 2:
-                today = fallback_date or datetime.now(ist).date()
+                today = fallback_date or datetime.now(local_tz).date()
                 dt = datetime.combine(
                     today,
                     dt_time(
@@ -85,21 +76,19 @@ def parse_trade_timestamp(timestamp_str, fallback_date=None):
                         int(time_parts[2]) if len(time_parts) > 2 else 0,
                     ),
                 )
-                return ist.localize(dt)
+                return local_tz.localize(dt)
         except (ValueError, IndexError):
             pass
 
-    # Fallback: try pandas auto-parsing
     try:
         dt = pd.to_datetime(timestamp_str)
         if dt.tz is None:
-            return dt.tz_localize(ist)
-        return dt.tz_convert(ist)
+            return dt.tz_localize(local_tz)
+        return dt.tz_convert(local_tz)
     except Exception as e:
         logger.warning(f"Failed to auto-parse timestamp '{timestamp_str}': {e}")
 
     return None
-
 
 # Rate limiter for historical data API calls
 class RateLimiter:
@@ -129,38 +118,35 @@ history_rate_limiter = RateLimiter(calls_per_second=2)
 pnltracker_bp = Blueprint("pnltracker_bp", __name__, url_prefix="/")
 
 
-def convert_timestamp_to_ist(df, symbol=""):
+def convert_timestamp_to_local(df, symbol=""):
     """
-    Convert timestamp to IST with robust handling for different formats.
-    Returns the dataframe with datetime index in IST timezone.
+    Convert timestamp to local timezone with robust handling for different formats.
+    Returns the dataframe with datetime index in the configured timezone.
     """
-    ist = pytz.timezone("Asia/Kolkata")
+    local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
     try:
         # Try different timestamp formats
         if "timestamp" in df.columns:
-            # Try as Unix timestamp first (seconds)
             try:
                 df["datetime"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
-                df["datetime"] = df["datetime"].dt.tz_convert(ist)
+                df["datetime"] = df["datetime"].dt.tz_convert(local_tz)
             except Exception:
-                # Try as milliseconds
                 try:
                     df["datetime"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-                    df["datetime"] = df["datetime"].dt.tz_convert(ist)
+                    df["datetime"] = df["datetime"].dt.tz_convert(local_tz)
                 except Exception:
-                    # Try as string datetime
                     df["datetime"] = pd.to_datetime(df["timestamp"])
                     if df["datetime"].dt.tz is None:
-                        df["datetime"] = df["datetime"].dt.tz_localize("UTC").dt.tz_convert(ist)
+                        df["datetime"] = df["datetime"].dt.tz_localize("UTC").dt.tz_convert(local_tz)
                     else:
-                        df["datetime"] = df["datetime"].dt.tz_convert(ist)
+                        df["datetime"] = df["datetime"].dt.tz_convert(local_tz)
         elif "datetime" in df.columns:
             df["datetime"] = pd.to_datetime(df["datetime"])
             if df["datetime"].dt.tz is None:
-                df["datetime"] = df["datetime"].dt.tz_localize("UTC").dt.tz_convert(ist)
+                df["datetime"] = df["datetime"].dt.tz_localize("UTC").dt.tz_convert(local_tz)
             else:
-                df["datetime"] = df["datetime"].dt.tz_convert(ist)
+                df["datetime"] = df["datetime"].dt.tz_convert(local_tz)
         else:
             logger.warning(f"No timestamp field found for {symbol}")
             return None
@@ -171,7 +157,6 @@ def convert_timestamp_to_ist(df, symbol=""):
     except Exception as e:
         logger.warning(f"Error converting timestamps for {symbol}: {e}")
         return None
-
 
 def dynamic_import(broker, module_name, function_names):
     module_functions = {}
@@ -234,8 +219,8 @@ def get_pnl_data():
             ), 401
 
         # Default to today's date for historical data (will be overridden by trade date if trades exist)
-        ist = pytz.timezone("Asia/Kolkata")
-        today_str = datetime.now(ist).date().strftime("%Y-%m-%d")
+        local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
+        today_str = datetime.now(local_tz).date().strftime("%Y-%m-%d")
 
         # Get tradebook data using the service (with API key)
         success, tradebook_response, status_code = get_tradebook(api_key=api_key)
@@ -349,8 +334,9 @@ def get_pnl_data():
             logger.info(f"First trade time: {first_trade_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         else:
             logger.warning("Could not determine first trade time, using market open time")
-            ist = pytz.timezone("Asia/Kolkata")
-            first_trade_time = datetime.now(ist).replace(hour=9, minute=15, second=0, microsecond=0)
+            local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
+            # Default to 9:00 as a universal baseline
+            first_trade_time = datetime.now(local_tz).replace(hour=9, minute=0, second=0, microsecond=0)
 
         # Determine the trading date from first trade time (handles overnight session spanning)
         # This ensures we query historical data for the correct date when trades are from previous day
@@ -508,12 +494,11 @@ def get_pnl_data():
                 if success and "data" in hist_response:
                     df_hist = pd.DataFrame(hist_response["data"])
                     if not df_hist.empty:
-                        df_hist = convert_timestamp_to_ist(df_hist, symbol)
+                        df_hist = convert_timestamp_to_local(df_hist, symbol)
 
                         if df_hist is not None:
-                            ist = pytz.timezone("Asia/Kolkata")
-                            current_time = datetime.now(ist)
-
+                            local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
+                            current_time = datetime.now(local_tz)
                             # Filter to trading hours
                             if first_trade_time:
                                 df_hist = df_hist[df_hist.index >= first_trade_time]
@@ -646,7 +631,7 @@ def get_pnl_data():
         has_carryforward_positions = False
 
         if current_positions:
-            ist = pytz.timezone("Asia/Kolkata")
+            local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
             for pos_key, pos_data in current_positions.items():
                 parts = pos_key.rsplit("_", 1)
@@ -676,12 +661,13 @@ def get_pnl_data():
                         if success and "data" in hist_response:
                             df_hist = pd.DataFrame(hist_response["data"])
                             if not df_hist.empty:
-                                df_hist = convert_timestamp_to_ist(df_hist, symbol)
+                                df_hist = convert_timestamp_to_local(df_hist, symbol)
 
                                 if df_hist is not None:
-                                    current_time = datetime.now(ist)
+                                    current_time = datetime.now(local_tz)
+                                    open_h, open_m = (9, 30) if exchange in ["US", "OPRA"] else (9, 15)
                                     market_open = df_hist.index[0].replace(
-                                        hour=9, minute=15, second=0, microsecond=0
+                                        hour=open_h, minute=open_m, second=0, microsecond=0
                                     )
                                     df_hist = df_hist[df_hist.index >= market_open]
                                     df_hist = df_hist[df_hist.index <= current_time]
@@ -902,20 +888,20 @@ def get_pnl_data():
                     if success and "data" in hist_response:
                         df_hist = pd.DataFrame(hist_response["data"])
                         if not df_hist.empty:
-                            # Convert timestamp to IST with robust handling
-                            df_hist = convert_timestamp_to_ist(df_hist, symbol)
+                            # Convert timestamp to local timezone with robust handling
+                            df_hist = convert_timestamp_to_local(df_hist, symbol)
 
                             if df_hist is not None:
                                 # Filter to show data from first trade time onwards
-                                ist = pytz.timezone("Asia/Kolkata")
-                                current_time = datetime.now(ist)
+                                local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
+                                current_time = datetime.now(local_tz)
 
                                 # For positions without trades, we still need to determine when to start
-                                # Use market open time as default
-                                today_915am = df_hist.index[0].replace(
-                                    hour=9, minute=15, second=0, microsecond=0
+                                open_h, open_m = (9, 30) if exchange in ["US", "OPRA"] else (9, 15)
+                                market_open = df_hist.index[0].replace(
+                                    hour=open_h, minute=open_m, second=0, microsecond=0
                                 )
-                                df_hist = df_hist[df_hist.index >= today_915am]
+                                df_hist = df_hist[df_hist.index >= market_open]
                                 df_hist = df_hist[df_hist.index <= current_time]
                             else:
                                 logger.warning(
@@ -957,15 +943,15 @@ def get_pnl_data():
 
             # If we still couldn't get any historical data, create a simple flat line
             if portfolio_pnl is None:
-                ist = pytz.timezone("Asia/Kolkata")
-                current_time = datetime.now(ist)
+                local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
+                current_time = datetime.now(local_tz)
                 start_time = current_time.replace(hour=9, minute=0, second=0, microsecond=0)
                 end_time = current_time
 
                 if end_time <= start_time:
                     end_time = start_time + timedelta(minutes=1)
 
-                time_range = pd.date_range(start=start_time, end=end_time, freq="1min", tz=ist)
+                time_range = pd.date_range(start=start_time, end=end_time, freq="1min", tz=local_tz)
                 portfolio_pnl = pd.DataFrame(index=time_range)
 
                 # Use current position P&L as constant value
@@ -979,14 +965,14 @@ def get_pnl_data():
             # Add zero PnL data from market open to first trade if needed
             # Skip when carry-forward positions exist (they already have data from market open)
             if first_trade_time and trades and not has_carryforward_positions:
-                ist = pytz.timezone("Asia/Kolkata")
-                market_open = first_trade_time.replace(hour=9, minute=15, second=0, microsecond=0)
+                local_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
+                market_open = first_trade_time.replace(hour=9, minute=0, second=0, microsecond=0)
 
                 # Only add pre-trade data if first trade is after market open
                 if first_trade_time > market_open:
                     # Create a zero PnL series from market open to first trade
                     pre_trade_index = pd.date_range(
-                        start=market_open, end=first_trade_time, freq="1min", tz=ist
+                        start=market_open, end=first_trade_time, freq="1min", tz=local_tz
                     )[:-1]  # Exclude the first trade time itself
 
                     if len(pre_trade_index) > 0:

@@ -35,7 +35,7 @@ def get_ist_timestamp():
     """Get current timestamp in IST format"""
     try:
         utc_now = datetime.now(pytz.UTC)
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         ist_now = utc_now.astimezone(ist)
         return ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
     except Exception as e:

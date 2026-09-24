@@ -98,14 +98,27 @@ export default function HolidaysPage() {
     }
   }
 
-  // Convert HH:MM time string to epoch milliseconds for a given date
-  const timeToEpochMs = (dateStr: string, timeStr: string): number => {
-    const [hours, minutes] = timeStr.split(':').map(Number)
-    const date = new Date(`${dateStr}T00:00:00+05:30`) // IST timezone
-    date.setHours(hours, minutes, 0, 0)
-    return date.getTime()
+  const getTzOffsetString = (date: Date, locale: string, timeZone: string): string => {
+    const parts = new Intl.DateTimeFormat(locale, {
+      timeZone,
+      timeZoneName: 'longOffset',
+    }).formatToParts(date)
+    const tzName = parts.find((p) => p.type === 'timeZoneName')?.value || 'GMT+00:00'
+    const offset = tzName.replace('GMT', '')
+    return offset || '+00:00'
   }
 
+  // Convert HH:MM time string to epoch milliseconds using VITE_SERVER_TIMEZONE
+  const timeToEpochMs = (dateStr: string, timeStr: string): number => {
+    const targetTimezone = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+    const appLocale = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
+    const localIso = `${dateStr}T${timeStr}:00`
+    const approxDate = new Date(`${localIso}Z`)
+    const offsetStr = getTzOffsetString(approxDate, appLocale, targetTimezone)
+
+    return new Date(`${localIso}${offsetStr}`).getTime()
+    }
   const handleAdd = async () => {
     if (!newHoliday.date || !newHoliday.description) {
       showToast.error('Please fill in date and description', 'admin')

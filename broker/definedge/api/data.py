@@ -1,3 +1,4 @@
+import os
 import asyncio
 import threading
 import time
@@ -665,7 +666,7 @@ class BrokerData:
                 # Definedge candle timestamps are naive IST; comparing them against
                 # a server-local now() would truncate the most recent candles by the
                 # host's UTC offset (~5.5h of missing data on a UTC deployment).
-                current_time = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None)
+                current_time = pd.Timestamp.now(tz=os.getenv("TIMEZONE", "Asia/Kolkata")).tz_localize(None)
                 if to_date.date() == current_time.date():
                     to_date = current_time.replace(second=0, microsecond=0)
                 else:
@@ -1055,7 +1056,7 @@ class BrokerData:
                 # We need to localize them as IST and convert to UTC before converting to Unix epoch
                 # This ensures the OpenAlgo client interprets them correctly
                 # Localize as IST (the timestamps from Definedge are in IST)
-                df["timestamp"] = df["timestamp"].dt.tz_localize("Asia/Kolkata")
+                df["timestamp"] = df["timestamp"].dt.tz_localize(os.getenv("TIMEZONE", "Asia/Kolkata"))
                 # Convert to UTC for storage as Unix epoch
                 df["timestamp"] = df["timestamp"].dt.tz_convert("UTC")
                 # Now convert to Unix epoch (this will be in UTC)

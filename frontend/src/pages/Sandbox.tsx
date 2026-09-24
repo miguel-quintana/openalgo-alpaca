@@ -54,14 +54,30 @@ const DAYS_OF_WEEK = [
   'Sunday',
 ]
 
-const CAPITAL_OPTIONS = [
-  { value: '100000', label: '1,00,000 (1 Lakh)' },
-  { value: '500000', label: '5,00,000 (5 Lakhs)' },
-  { value: '1000000', label: '10,00,000 (10 Lakhs)' },
-  { value: '2500000', label: '25,00,000 (25 Lakhs)' },
-  { value: '5000000', label: '50,00,000 (50 Lakhs)' },
-  { value: '10000000', label: '1,00,00,000 (1 Crore)' },
-]
+// 1. Read configuration from Vite Environment Variables
+const APP_LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+const SERVER_TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+const CURRENCY_CODE = APP_LOCALE === 'en-US' ? 'USD' : 'INR'
+
+// 2. Extract short timezone abbreviation (e.g., EDT instead of America/New_York)
+const shortTZ = new Intl.DateTimeFormat('en-US', {
+  timeZone: SERVER_TIMEZONE,
+  timeZoneName: 'short',
+}).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value || SERVER_TIMEZONE
+
+// 3. Dynamically format capital options based on the locale
+const CAPITAL_VALUES = ['100000', '500000', '1000000', '2500000', '5000000', '10000000']
+
+const getCapitalOptions = () => {
+  return CAPITAL_VALUES.map((val) => ({
+    value: val,
+    label: new Intl.NumberFormat(APP_LOCALE, {
+      style: 'currency',
+      currency: CURRENCY_CODE,
+      maximumFractionDigits: 0,
+    }).format(Number(val)),
+  }))
+}
 
 function formatConfigLabel(key: string): string {
   return key
@@ -69,7 +85,7 @@ function formatConfigLabel(key: string): string {
     .map((word) => {
       const upper = word.toUpperCase()
       if (
-        ['NSE', 'BSE', 'CDS', 'BCD', 'MCX', 'NCDEX', 'NCO', 'MIS', 'CNC', 'NRML'].includes(upper)
+        ['NSE', 'BSE', 'CDS', 'BCD', 'MCX', 'NCDEX', 'NCO', 'MIS', 'CNC', 'NRML', 'US', 'OPRA'].includes(upper)
       ) {
         return upper
       }
@@ -328,6 +344,7 @@ export default function Sandbox() {
     // Starting capital selector
     if (configKey === 'starting_capital') {
       const currentValue = parseFloat(configData.value || '10000000').toFixed(0)
+      const capitalOptions = getCapitalOptions() // Add this line
       return (
         <div className="flex gap-2">
           <Select value={currentValue} onValueChange={(value) => updateConfig(configKey, value)}>
@@ -335,7 +352,7 @@ export default function Sandbox() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {CAPITAL_OPTIONS.map((option) => (
+              {capitalOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
                 </SelectItem>
@@ -440,7 +457,8 @@ export default function Sandbox() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Settings className="h-5 w-5 text-primary" />
-                {category.title}
+                {/* Replaces "IST" with "EDT" */}
+                {category.title.replace('IST', shortTZ)}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -451,7 +469,12 @@ export default function Sandbox() {
                       {formatConfigLabel(configKey)}
                     </Label>
                     {renderConfigInput(configKey, configData)}
-                    <p className="text-xs text-muted-foreground">{configData.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {/* Dynamically swaps currency codes and short timezones */}
+                      {configData.description
+                        .replace('IST', shortTZ)
+                        .replace('INR', CURRENCY_CODE)}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -478,7 +501,15 @@ export default function Sandbox() {
                   <p className="font-semibold">This action will:</p>
                   <ul className="list-disc list-inside space-y-1 ml-4 text-sm">
                     <li>Delete all orders, trades, positions, and holdings</li>
-                    <li>Reset funds to starting capital (1.00 Crore)</li>
+                    <li>
+                      Reset funds to starting capital (
+                      {new Intl.NumberFormat(APP_LOCALE, {
+                        style: 'currency',
+                        currency: CURRENCY_CODE,
+                        maximumFractionDigits: 0,
+                      }).format(10000000)}
+                      )
+                    </li>
                     <li>Reset all configuration values to defaults</li>
                     <li>Clear all historical data</li>
                   </ul>

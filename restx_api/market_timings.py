@@ -31,9 +31,11 @@ class MarketTimings(Resource):
 
             # Extract parameters
             date_str = timings_data["date"]
+            include_extended = timings_data["include_extended"]
+            
 
             # Call the service function to get timings
-            success, response_data, status_code = get_timings(date_str=date_str)
+            success, response_data, status_code = get_timings(date_str=date_str, include_extended=include_extended)
 
             return make_response(jsonify(response_data), status_code)
 

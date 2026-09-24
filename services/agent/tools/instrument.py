@@ -85,6 +85,8 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import os
+
 from agno.exceptions import RetryAgentRun
 
 from services import depth_service, history_service, quotes_service, symbol_service
@@ -163,7 +165,7 @@ MAX_DEPTH_LEVELS = 5
 #: rendered in full would bury the card it is explaining.
 MAX_REASON_CHARS = 300
 
-_TIMEZONE = "Asia/Kolkata"
+_TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
 
 _NO_SINK = no_sink_message("instrument card")
 

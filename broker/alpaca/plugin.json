@@ -1,0 +1,22 @@
+{
+  "Plugin Name": "alpaca",
+  "Description": "Alpaca Markets OpenAlgo Plugin — US Equities (Stocks & ETFs)",
+  "version": "1.0.0",
+  "Author": "Miguel Quintana",
+  "features": {
+    "place_order": true,
+    "modify_order": true,
+    "cancel_order": true,
+    "websocket": true,
+    "market_depth": true,
+    "historical_data": true
+  },
+  "display_name": "Alpaca Markets",
+    "supported_exchanges": [
+      "US",
+      "CRYPTO",
+      "OPRA"
+    ],
+    "broker_type": "multi",  
+    "leverage_config": true
+}

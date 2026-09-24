@@ -44,6 +44,22 @@ function formatIndianNumber(value: string | number): string {
   return isNegative ? `-${formatted}` : formatted
 }
 
+const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
+function formatNumber(value: string | number): string {
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (Number.isNaN(num)) return '0.00'
+
+  if (LOCALE === 'en-US') {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(num)
+  }
+
+  return formatIndianNumber(num)
+}
+
 // Get color class based on P&L value
 function getPnLColor(value: string | number): string {
   const num = typeof value === 'string' ? parseFloat(value) : value
@@ -338,7 +354,7 @@ export default function Dashboard() {
                 {isLoading
                   ? '...'
                   : marginData
-                    ? formatIndianNumber(marginData.availablecash)
+                    ? formatNumber(marginData.availablecash)
                     : '0.00'}
               </p>
               <Badge variant="secondary" className="mt-2">
@@ -357,7 +373,7 @@ export default function Dashboard() {
                 {isLoading
                   ? '...'
                   : marginData
-                    ? formatIndianNumber(marginData.collateral)
+                    ? formatNumber(marginData.collateral)
                     : '0.00'}
               </p>
               <Badge variant="secondary" className="mt-2">
@@ -381,7 +397,7 @@ export default function Dashboard() {
                 {isLoading
                   ? '...'
                   : marginData
-                    ? formatIndianNumber(marginData.m2munrealized)
+                    ? formatNumber(marginData.m2munrealized)
                     : '0.00'}
               </p>
               <Badge
@@ -408,7 +424,7 @@ export default function Dashboard() {
                 {isLoading
                   ? '...'
                   : marginData
-                    ? formatIndianNumber(marginData.m2mrealized)
+                    ? formatNumber(marginData.m2mrealized)
                     : '0.00'}
               </p>
               <Badge
@@ -430,7 +446,7 @@ export default function Dashboard() {
                 {isLoading
                   ? '...'
                   : marginData
-                    ? formatIndianNumber(marginData.utiliseddebits)
+                    ? formatNumber(marginData.utiliseddebits)
                     : '0.00'}
               </p>
               <Badge

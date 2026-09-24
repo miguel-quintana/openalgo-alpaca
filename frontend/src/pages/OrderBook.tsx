@@ -54,7 +54,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { type OrderEventType, useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 // Note: AlertDialog still used for Cancel All Orders
 import { useSupportedExchanges } from '@/hooks/useSupportedExchanges'
-import { cn, makeFormatCurrency, sanitizeCSV } from '@/lib/utils'
+import { cn, sanitizeCSV } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { onModeChange } from '@/stores/themeStore'
 import type { Order, OrderStats } from '@/types/trading'
@@ -103,6 +103,9 @@ function parseTimestamp(timestamp: string): number {
   return date.getTime() || 0
 }
 
+const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
 function formatTime(timestamp: string): string {
   if (!timestamp) return '-'
 
@@ -114,10 +117,11 @@ function formatTime(timestamp: string): string {
   }
 
   const date = new Date(timeValue)
-  return date.toLocaleTimeString('en-IN', {
+  return date.toLocaleTimeString(LOCALE, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    timeZone: TIMEZONE,
   })
 }
 
@@ -131,7 +135,24 @@ const statusConfig: Record<string, { icon: typeof CheckCircle2; color: string; l
 export default function OrderBook() {
   const { apiKey, user } = useAuthStore()
   const { isCrypto } = useSupportedExchanges()
-  const formatCurrency = useMemo(() => makeFormatCurrency(user?.broker), [user?.broker])
+  
+  const formatCurrency = useMemo(() => {
+    const isUSBroker = ['schwab', 'alpaca', 'tradier'].includes(user?.broker?.toLowerCase() || '')
+    const currency = import.meta.env.VITE_APP_CURRENCY || (isUSBroker ? 'USD' : 'INR')
+
+    return (value: number) => {
+      // Expand to 4 decimal places if the value has sub-penny precision
+      const maxDecimals = Math.abs(value * 100) % 1 !== 0 ? 4 : 2
+      
+      return new Intl.NumberFormat(LOCALE, {
+        style: 'currency',
+        currency: currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: maxDecimals,
+      }).format(value)
+    }
+  }, [user?.broker])
+
   const [orders, setOrders] = useState<Order[]>([])
   const [stats, setStats] = useState<OrderStats | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -401,7 +422,13 @@ export default function OrderBook() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      const filename = `orderbook_${new Date().toISOString().split('T')[0]}.csv`
+      
+      // Format date as YYYY-MM-DD strictly honoring the configured timezone
+      const dateStr = new Intl.DateTimeFormat(LOCALE, { 
+        timeZone: TIMEZONE 
+      }).format(new Date())
+      
+      const filename = `orderbook_${dateStr}.csv`
       a.download = filename
       a.click()
       URL.revokeObjectURL(url)

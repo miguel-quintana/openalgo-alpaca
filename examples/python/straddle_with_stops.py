@@ -129,7 +129,7 @@ def place_nifty_straddle_with_sl():
 # SCHEDULER — 09:20 AM IST
 # =====================================
 def schedule_straddle():
-    ist = pytz.timezone("Asia/Kolkata")
+    ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     scheduler = BackgroundScheduler(timezone=ist)
 
     scheduler.add_job(

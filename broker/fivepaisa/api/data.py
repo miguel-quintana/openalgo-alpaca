@@ -702,7 +702,7 @@ class BrokerData:
         df["timestamp"] = pd.to_datetime(df["timestamp"])
 
         # Timezone handling
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         df["timestamp"] = df["timestamp"].dt.tz_convert(ist)
 
         # Sort by timestamp
@@ -891,7 +891,7 @@ class BrokerData:
                                 # (no market-hours shifting, no index-based rebuild),
                                 # so missing/filtered candles leave honest gaps instead
                                 # of silently shifting the whole series earlier.
-                                ist = pytz.timezone("Asia/Kolkata")
+                                ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
                                 dt = ist.localize(dt)
                                 timestamp_sec = int(dt.timestamp())
 

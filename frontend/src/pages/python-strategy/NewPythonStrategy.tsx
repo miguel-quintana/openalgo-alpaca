@@ -1,5 +1,5 @@
 import { ArrowLeft, Clock, FileCode, Info, Upload } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { pythonStrategyApi } from '@/api/python-strategy'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -51,6 +51,9 @@ if __name__ == "__main__":
 `
 
 export default function NewPythonStrategy() {
+	// 1. Define environment variables with fallbacks
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata';
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN';
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [name, setName] = useState('')
@@ -59,16 +62,49 @@ export default function NewPythonStrategy() {
   const [showExample, setShowExample] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
+  // 2. State to hold the dynamic short timezone code (e.g., IST)
+  const [shortTZ, setShortTZ] = useState<string>('IST')
+
   // Exchange drives the holiday/session calendar
   const [exchange, setExchange] = useState<string>('NSE')
 
-  // Schedule fields with defaults (Mon-Fri, 9:00 AM - 4:00 PM IST)
+  // Schedule fields with defaults (Mon-Fri, 9:00 AM - 4:00 PM)
   const [startTime, setStartTime] = useState('09:00')
   const [stopTime, setStopTime] = useState('16:00')
   const [selectedDays, setSelectedDays] = useState<string[]>(['mon', 'tue', 'wed', 'thu', 'fri'])
 
   const { exchanges, getWindow } = useStrategyExchanges()
   const isCrypto = exchange === CRYPTO_EXCHANGE_VALUE
+
+  // Safely inject US and OPRA into the list if the backend API doesn't provide them yet
+  const extendedExchanges = useMemo(() => {
+    const list = [...exchanges]
+    if (!list.some((e) => e.value === 'US')) {
+      // Use "as any" to bypass strict hook typing if missing optional properties
+      list.push({ value: 'US', label: 'US — US Equities' } as any)
+    }
+    if (!list.some((e) => e.value === 'OPRA')) {
+      list.push({ value: 'OPRA', label: 'OPRA — US Options' } as any)
+    }
+    return list
+  }, [exchanges])
+
+  // 3. Resolve the configured timezone abbreviation dynamically
+  useEffect(() => {
+    try {
+      const formatter = new Intl.DateTimeFormat(LOCALE, {
+        timeZone: TIMEZONE,
+        timeZoneName: 'short'
+      })
+      const parts = formatter.formatToParts(new Date())
+      const tzPart = parts.find(part => part.type === 'timeZoneName')
+      if (tzPart) {
+        setShortTZ(tzPart.value)
+      }
+    } catch (error) {
+      console.error("Invalid configuration for locale or timezone:", error)
+    }
+  }, [])
 
   // When exchange changes, prefill the schedule with that exchange's session
   // window from the market calendar DB. Never hardcode a window here: a stale
@@ -77,10 +113,16 @@ export default function NewPythonStrategy() {
   const handleExchangeChange = (value: string) => {
     setExchange(value)
     const session = getWindow(value)
+    
     if (session) {
       setStartTime(session.start)
       setStopTime(session.stop)
+    } else if (value === 'US' || value === 'OPRA') {
+      // Fallback to standard US market hours (09:30 AM - 4:00 PM)
+      setStartTime('09:30')
+      setStopTime('16:00')
     }
+    
     setSelectedDays(
       value === CRYPTO_EXCHANGE_VALUE
         ? ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -280,13 +322,12 @@ export default function NewPythonStrategy() {
                 onChange={(e) => handleExchangeChange(e.target.value)}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                {exchanges.map((opt) => (
+                {extendedExchanges.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
-              </select>
-              <p className="text-xs text-muted-foreground">
+              </select>              <p className="text-xs text-muted-foreground">
                 Drives the holiday calendar and effective trading window for this strategy. Each
                 exchange has its own holiday list and per-date session timings (e.g. MCX may run a
                 partial 17:00-23:55 session on a date when NSE/BSE are fully closed — the host
@@ -304,13 +345,13 @@ export default function NewPythonStrategy() {
               <p className="text-sm text-muted-foreground">
                 {isCrypto
                   ? 'CRYPTO runs 24/7. The schedule below limits when this script is allowed to run.'
-                  : 'Configure when this strategy should run. All times are in IST.'}
+                  : `Configure when this strategy should run. All times are in ${shortTZ}.`}
               </p>
 
               {/* Time Inputs */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="startTime">Start Time (IST)</Label>
+                  <Label htmlFor="startTime">Start Time ({shortTZ})</Label>
                   <Input
                     id="startTime"
                     type="time"
@@ -321,7 +362,7 @@ export default function NewPythonStrategy() {
                   {errors.startTime && <p className="text-sm text-red-500">{errors.startTime}</p>}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="stopTime">Stop Time (IST)</Label>
+                  <Label htmlFor="stopTime">Stop Time ({shortTZ})</Label>
                   <Input
                     id="stopTime"
                     type="time"

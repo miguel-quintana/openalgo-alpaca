@@ -200,6 +200,10 @@ export interface SystemTime {
   server_time: string
   server_tz: string | null
   ist_time: string | null
+  
+  // Add these two lines:
+  configured_tz?: string | null;
+  configured_time?: string | null;
 }
 
 export interface SystemInfo {

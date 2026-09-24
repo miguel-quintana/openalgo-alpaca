@@ -180,7 +180,7 @@ class UserPreference(Base):
     daily_summary = Column(Boolean, default=True)
     summary_time = Column(String(10), default="18:00")
     language = Column(String(10), default="en")
-    timezone = Column(String(50), default="Asia/Kolkata")
+    timezone = Column(String(50), default=os.getenv("TIMEZONE", "Asia/Kolkata"))
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -675,7 +675,7 @@ def get_user_preferences(telegram_id: int) -> dict:
                 "daily_summary": True,
                 "summary_time": "18:00",
                 "language": "en",
-                "timezone": "Asia/Kolkata",
+                "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
             }
 
         # Cache the result

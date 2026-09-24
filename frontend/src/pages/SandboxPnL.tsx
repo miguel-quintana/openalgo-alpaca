@@ -13,8 +13,34 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { cn, makeFormatCurrency } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
+
+const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
+function formatDateTime(timestamp: string): string {
+  if (!timestamp) return '-'
+  try {
+    // Pass through short date strings (YYYY-MM-DD) without timezone shifts
+    if (timestamp.length <= 10 && !timestamp.includes('T')) return timestamp
+
+    const date = new Date(timestamp)
+    if (isNaN(date.getTime())) return timestamp
+
+    return new Intl.DateTimeFormat(LOCALE, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZone: TIMEZONE,
+    }).format(date)
+  } catch {
+    return timestamp
+  }
+}
 
 interface DailyPnL {
   date: string
@@ -85,7 +111,24 @@ function getPnLColor(value: number): string {
 
 export default function SandboxPnL() {
   const { user } = useAuthStore()
-  const formatCurrency = useMemo(() => makeFormatCurrency(user?.broker), [user?.broker])
+  
+  const formatCurrency = useMemo(() => {
+    const isUSBroker = ['schwab', 'alpaca', 'tradier'].includes(user?.broker?.toLowerCase() || '')
+    const currency = import.meta.env.VITE_APP_CURRENCY || (isUSBroker ? 'USD' : 'INR')
+
+    return (value: number) => {
+      // Expand to 4 decimal places if the value has sub-penny precision
+      const maxDecimals = Math.abs(value * 100) % 1 !== 0 ? 4 : 2
+
+      return new Intl.NumberFormat(LOCALE, {
+        style: 'currency',
+        currency: currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: maxDecimals,
+      }).format(value)
+    }
+  }, [user?.broker])
+
   const [data, setData] = useState<SandboxData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('daily')
@@ -390,7 +433,7 @@ export default function SandboxPnL() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
-                            {pos.updated_at}
+                            {formatDateTime(pos.updated_at)}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -458,7 +501,7 @@ export default function SandboxPnL() {
                             {formatCurrency(holding.pnl_percent)}%
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
-                            {holding.settlement_date}
+                            {formatDateTime(holding.settlement_date)}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -536,7 +579,7 @@ export default function SandboxPnL() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
-                            {trade.timestamp}
+                            {formatDateTime(trade.timestamp)}
                           </TableCell>
                         </TableRow>
                       ))}

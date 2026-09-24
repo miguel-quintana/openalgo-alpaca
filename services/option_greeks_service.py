@@ -11,6 +11,7 @@ opengreeks is a Rust reimplementation with byte-identical signatures to py_volli
 import re
 from datetime import datetime
 from typing import Any
+import os
 from zoneinfo import ZoneInfo
 
 from utils.constants import CRYPTO_EXCHANGES
@@ -20,7 +21,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-INDIA_TZ = ZoneInfo("Asia/Kolkata")
+INDIA_TZ = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 # Exchange-specific symbol mappings
 NSE_INDEX_SYMBOLS = {

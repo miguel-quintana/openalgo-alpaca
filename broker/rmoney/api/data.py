@@ -630,8 +630,8 @@ class BrokerData:
                 token = symbol_info.token  # token = instrument ID
 
             # Convert dates to datetime objects with IST timezone
-            start_date = pd.to_datetime(from_date).tz_localize("Asia/Kolkata")
-            end_date = pd.to_datetime(to_date).tz_localize("Asia/Kolkata")
+            start_date = pd.to_datetime(from_date).tz_localize(os.getenv("TIMEZONE", "Asia/Kolkata"))
+            end_date = pd.to_datetime(to_date).tz_localize(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
             # Use start of day for from_date
             from_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)

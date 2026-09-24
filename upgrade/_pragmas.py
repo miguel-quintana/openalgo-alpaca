@@ -39,22 +39,25 @@ BUSY_TIMEOUT_MS = 15000
 
 @event.listens_for(Engine, "connect")
 def _set_sqlite_pragmas(dbapi_connection, connection_record):
-    """Apply WAL + synchronous=NORMAL + busy_timeout to every SQLite connection."""
-    if not isinstance(dbapi_connection, sqlite3.Connection):
-        return
-    cursor = dbapi_connection.cursor()
-    try:
-        # A pragma failure must never break the connection: if another process
-        # holds a legacy-mode lock during first-time conversion, the connection
-        # simply continues in the journal mode already on disk.
-        for pragma in (
-            "PRAGMA journal_mode=WAL",
-            "PRAGMA synchronous=NORMAL",
-            f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}",
-        ):
-            try:
-                cursor.execute(pragma)
-            except sqlite3.OperationalError:
-                pass
-    finally:
-        cursor.close()
+    if Engine.name == "sqlite":
+        """Apply WAL + synchronous=NORMAL + busy_timeout to every SQLite connection."""
+        cursor = dbapi_connection.cursor()
+        try:
+            # A pragma failure must never break the connection: if another process
+            # holds a legacy-mode lock during first-time conversion, the connection
+            # simply continues in the journal mode already on disk.
+            for pragma in (
+                "PRAGMA journal_mode=WAL",
+                "PRAGMA synchronous=NORMAL",
+                f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}",
+            ):
+                try:
+                    cursor.execute(pragma)
+                except sqlite3.OperationalError:
+                    pass
+        finally:
+            cursor.close()
+    elif Engine.name == "postgresql":
+        # Optional: Apply PostgreSQL specific optimization parameters here if needed
+        #logger.warning(f"Database engine {Engine.name} is not specifically optimized in this code.")
+        pass

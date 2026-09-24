@@ -45,6 +45,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+import os
 from zoneinfo import ZoneInfo
 
 from cachetools import TTLCache
@@ -924,7 +925,7 @@ WEBSEARCH_PROBE_MAX_RESULTS = 3
 
 #: Indian markets, Indian trading day. The daily cap resets on the IST date,
 #: matching how `tools/websearch.py` counts it.
-_IST = ZoneInfo("Asia/Kolkata")
+_IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 @dataclass(frozen=True)

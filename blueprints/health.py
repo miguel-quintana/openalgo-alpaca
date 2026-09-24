@@ -16,6 +16,7 @@ import csv
 import io
 from datetime import datetime
 
+import os
 import pytz
 from flask import Blueprint, Response, jsonify, request
 
@@ -30,21 +31,21 @@ logger = get_logger(__name__)
 health_bp = Blueprint("health_bp", __name__, url_prefix="/health")
 
 
-def convert_to_ist(timestamp):
-    """Convert UTC timestamp to IST"""
+def convert_to_configured_tz(timestamp):
+    """Convert UTC timestamp to configured TIMEZONE"""
     if isinstance(timestamp, str):
         timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     utc = pytz.timezone("UTC")
-    ist = pytz.timezone("Asia/Kolkata")
+    target_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     if timestamp.tzinfo is None:
         timestamp = utc.localize(timestamp)
-    return timestamp.astimezone(ist)
+    return timestamp.astimezone(target_tz)
 
 
 def format_ist_time(timestamp):
-    """Format timestamp in IST with 12-hour format"""
-    ist_time = convert_to_ist(timestamp)
-    return ist_time.strftime("%d-%m-%Y %I:%M:%S %p")
+    """Format timestamp in configured timezone"""
+    tz_time = convert_to_configured_tz(timestamp)
+    return tz_time.strftime("%Y-%m-%d %I:%M:%S %p")
 
 
 # ============================================================================
@@ -265,7 +266,7 @@ def get_current_metrics():
 
         return jsonify(
             {
-                "timestamp": convert_to_ist(metric.timestamp).isoformat(),
+                "timestamp": convert_to_configured_tz(metric.timestamp).isoformat(),
                 "fd": {
                     "count": metric.fd_count or 0,
                     "limit": metric.fd_limit,
@@ -318,7 +319,7 @@ def get_metrics_history():
         return jsonify(
             [
                 {
-                    "timestamp": convert_to_ist(m.timestamp).isoformat(),
+                    "timestamp": convert_to_configured_tz(m.timestamp).isoformat(),
                     "fd_count": m.fd_count,
                     "memory_rss_mb": m.memory_rss_mb,
                     "db_connections": m.db_connections_total,
@@ -359,7 +360,7 @@ def get_alerts():
             [
                 {
                     "id": alert.id,
-                    "timestamp": convert_to_ist(alert.timestamp).isoformat(),
+                    "timestamp": convert_to_configured_tz(alert.timestamp).isoformat(),
                     "alert_type": alert.alert_type,
                     "severity": alert.severity,
                     "metric_name": alert.metric_name,

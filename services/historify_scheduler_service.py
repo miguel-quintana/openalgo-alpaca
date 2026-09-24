@@ -4,6 +4,7 @@ Historify Scheduler Service
 Handles scheduled historical data downloads using APScheduler (Flask/sync version)
 """
 
+import os
 import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -175,9 +176,9 @@ class HistorifyScheduler:
                 time_str = schedule.get("time_of_day", "09:15")
                 try:
                     hour, minute = map(int, time_str.split(":"))
-                    # Use IST timezone explicitly for Indian markets
-                    trigger = CronTrigger(hour=hour, minute=minute, timezone="Asia/Kolkata")
-                    logger.debug(f"Creating daily trigger at {time_str} IST")
+                    # Use timezone explicitly 
+                    trigger = CronTrigger(hour=hour, minute=minute, timezone=os.getenv("TIMEZONE", "Asia/Kolkata"))
+                    logger.debug(f"Creating daily trigger at {time_str}")
                 except ValueError as e:
                     logger.error(f"Invalid time format: {time_str} - {e}")
                     return None
@@ -584,7 +585,7 @@ def execute_schedule(schedule_id: str, api_key: str = None):
             start_date=start_date,
             end_date=end_date,
             api_key=effective_api_key,
-            config={"schedule_id": schedule_id},
+            config={"schedule_id": schedule_id, "execution_id": execution_id},
             incremental=True,
         )
 

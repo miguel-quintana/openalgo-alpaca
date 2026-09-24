@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-IST = ZoneInfo("Asia/Kolkata")
+IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 def _last_session_expiry():

@@ -23,6 +23,7 @@
 #     get_history -> chart-data candles, resampled for the intervals HDFC does
 #                    not serve natively (it only has 1-minute and daily).
 
+import os
 import sys
 import threading
 import time
@@ -789,7 +790,7 @@ class BrokerData:
             if chart_type == "DAY":
                 stamps = stamps.dt.normalize() + pd.Timedelta(hours=5, minutes=30)
             else:
-                stamps = stamps.dt.tz_localize("Asia/Kolkata").dt.tz_convert("UTC").dt.tz_localize(
+                stamps = stamps.dt.tz_localize(os.getenv("TIMEZONE", "Asia/Kolkata")).dt.tz_convert("UTC").dt.tz_localize(
                     None
                 )
             df["timestamp"] = stamps.astype("int64") // 10**9

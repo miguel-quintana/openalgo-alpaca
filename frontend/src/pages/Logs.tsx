@@ -39,9 +39,25 @@ interface LogsResponse {
 }
 
 export default function LogsPage() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [totalPages, setTotalPages] = useState(1)
   const [currentPage, setCurrentPage] = useState(1)
+  
+  const formatDateTime = useCallback((isoString: string) => {
+    if (!isoString) return ''
+    try {
+      return new Intl.DateTimeFormat(LOCALE, {
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+        timeZone: TIMEZONE,
+      }).format(new Date(isoString))
+    } catch (e) {
+      return isoString // Fallback to raw string if parsing fails
+    }
+  }, [LOCALE, TIMEZONE])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
 
@@ -339,7 +355,7 @@ export default function LogsPage() {
                       <Badge variant="secondary">{String(requestData.exchange)}</Badge>
                     ) : null}
                     <Badge variant="outline" className="text-muted-foreground">
-                      {log.created_at}
+                      {formatDateTime(log.created_at)}
                     </Badge>
                   </div>
 

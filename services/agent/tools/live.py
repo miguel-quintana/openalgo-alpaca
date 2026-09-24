@@ -102,6 +102,8 @@ answer is read they will have moved.
 
 from __future__ import annotations
 
+import os
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -188,7 +190,7 @@ MAX_DEPTH_LEVELS = 5
 #: day's move alongside it for free, so there is nothing to choose between.
 COMBO_MODE = "Quote"
 
-_TIMEZONE = "Asia/Kolkata"
+_TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
 
 _BUY = "BUY"
 _SELL = "SELL"

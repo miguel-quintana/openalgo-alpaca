@@ -4,6 +4,8 @@ Reference: https://docs.openalgo.in/api-documentation/v1/order-constants
 """
 
 # Exchange Types
+EXCHANGE_US = "US"  # US Equity
+EXCHANGE_OPRA = "OPRA"  # US OPRA Options
 EXCHANGE_NSE = "NSE"  # NSE Equity
 EXCHANGE_NFO = "NFO"  # NSE Futures & Options
 EXCHANGE_CDS = "CDS"  # NSE Currency
@@ -27,7 +29,7 @@ CRYPTO_EXCHANGES: set[str] = {EXCHANGE_CRYPTO}
 # Set of broker names that map to crypto exchanges.
 # Used to select the correct download cutoff timezone (UTC vs IST).
 # Add new crypto brokers here — the smart download logic picks this up automatically.
-CRYPTO_BROKERS: set[str] = {"deltaexchange"}
+CRYPTO_BROKERS: set[str] = {"deltaexchange", "alpaca"}
 
 # Instrument type for crypto perpetual futures (used in symbol DB queries).
 INSTRUMENT_PERPFUT: str = "PERPFUT"
@@ -52,6 +54,8 @@ FNO_EXCHANGES: set[str] = {
 VALID_EXCHANGES = [
     EXCHANGE_NSE,
     EXCHANGE_NFO,
+    EXCHANGE_US,
+    EXCHANGE_OPRA,
     EXCHANGE_CDS,
     EXCHANGE_BSE,
     EXCHANGE_BFO,
@@ -91,6 +95,8 @@ VALID_ACTIONS = [ACTION_BUY, ACTION_SELL]
 EXCHANGE_BADGE_COLORS = {
     EXCHANGE_NSE: "badge-accent",
     EXCHANGE_NFO: "badge-secondary",
+    EXCHANGE_US: "badge-accent",
+    EXCHANGE_OPRA: "badge-secondary",
     EXCHANGE_CDS: "badge-info",
     EXCHANGE_BSE: "badge-neutral",
     EXCHANGE_BFO: "badge-warning",

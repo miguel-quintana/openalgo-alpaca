@@ -125,24 +125,21 @@ class OrderManager:
             # Exception: Allow orders that reduce/close existing positions
             if product == "MIS":
                 from datetime import time as dt_time
-
                 from sandbox.squareoff_manager import SquareOffManager
 
                 som = SquareOffManager()
                 square_off_time = som.square_off_times.get(exchange)
 
                 if square_off_time:
-                    ist = pytz.timezone("Asia/Kolkata")
-                    now = datetime.now(ist)
+                    tz_name = os.getenv("TIMEZONE", "Asia/Kolkata")
+                    local_tz = pytz.timezone(tz_name)
+                    now = datetime.now(local_tz)
                     current_time = now.time()
 
-                    # Market opens at 9:00 AM IST
-                    market_open_time = dt_time(9, 0)
+                    # Market opens at 9:30 AM for US/OPRA, 9:00 AM for others
+                    market_open_time = dt_time(9, 30) if exchange in ["US", "OPRA"] else dt_time(9, 0)
 
                     # Check if we're in the blocked period
-                    # Two scenarios:
-                    # 1. After square-off time same day: e.g., 15:20 (after 15:15 square-off)
-                    # 2. Before market open next day: e.g., 02:00 (before 09:00 market open)
                     is_blocked = False
                     if current_time >= square_off_time:
                         # After square-off time - block until next day
@@ -165,7 +162,6 @@ class OrderManager:
                         )
 
                         # Allow if reducing existing position
-                        # BUY reduces short position (negative qty), SELL reduces long position (positive qty)
                         is_reducing = False
                         if existing_position:
                             if action == "BUY" and existing_position.quantity < 0:
@@ -175,16 +171,18 @@ class OrderManager:
 
                         # Block only if opening/increasing position, allow if closing/reducing
                         if not is_reducing:
+                            short_tz = now.strftime('%Z')
+                            open_time_str = market_open_time.strftime('%H:%M')
                             return (
                                 False,
                                 {
                                     "status": "error",
-                                    "message": f"MIS orders cannot be placed after square-off time ({square_off_time.strftime('%H:%M')} IST). Trading resumes at 09:00 AM IST.",
+                                    "message": f"MIS orders cannot be placed after square-off time ({square_off_time.strftime('%H:%M')} {short_tz}). Trading resumes at {open_time_str} {short_tz}.",
                                     "mode": "analyze",
                                 },
                                 400,
                             )
-
+                        
             # Track validation for CNC SELL orders
             cnc_sell_rejection_reason = None
 
@@ -613,7 +611,7 @@ class OrderManager:
                     # triggered and permanently block that leg from ever
                     # ordering again. Rejections are audited via the order's own
                     # strategy/rejection_reason instead.
-                    order_timestamp=datetime.now(pytz.timezone("Asia/Kolkata")),
+                    order_timestamp=datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))),
                 )
 
                 db_session.add(order)
@@ -674,7 +672,7 @@ class OrderManager:
                 rejection_reason=None,
                 margin_blocked=actual_margin_to_block,  # Store exact margin blocked
                 gtt_leg_id=order_data.get("gtt_leg_id"),
-                order_timestamp=datetime.now(pytz.timezone("Asia/Kolkata")),
+                order_timestamp=datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))),
             )
 
             db_session.add(order)
@@ -875,7 +873,7 @@ class OrderManager:
                     )
                 order.trigger_price = Decimal(str(new_data["trigger_price"]))
 
-            order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
+            order.update_timestamp = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
             db_session.commit()
 
@@ -943,7 +941,7 @@ class OrderManager:
 
             # Update order status
             order.order_status = "cancelled"
-            order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
+            order.update_timestamp = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
             # Release blocked margin using the exact amount that was blocked
             if (
@@ -1309,7 +1307,7 @@ class OrderManager:
         """
         import random
 
-        now = datetime.now(pytz.timezone("Asia/Kolkata"))
+        now = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
         date_prefix = now.strftime("%y%m%d")  # YYMMDD format
 
         # Use microseconds (0-999999) + random (0-99) for 8-digit unique sequence

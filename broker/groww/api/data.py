@@ -246,7 +246,7 @@ class BrokerData:
             logger.warning("Empty DataFrame passed to fix_timestamps, returning as is")
             return df
 
-        ist_tz = pytz.timezone("Asia/Kolkata")
+        ist_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
         # For daily or weekly interval: Set all timestamps to 09:15 AM IST (market open time)
         # Important: Weekly timeframes should be treated like daily (first day of week at market open)
@@ -454,7 +454,7 @@ class BrokerData:
 
             # SIMPLIFIED APPROACH: Work with the data directly
             # Create a datetime index with market open time (09:15 AM IST)
-            ist = pytz.timezone("Asia/Kolkata")
+            ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
             # Convert based on timeframe and data format
             # Process both daily (D, 1d) and weekly (W) candles the same way
@@ -538,7 +538,7 @@ class BrokerData:
                 logger.info(f"Processing intraday data for timeframe {timeframe}")
                 rows = []
                 timestamps = []
-                ist_tz = pytz.timezone("Asia/Kolkata")
+                ist_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
                 # For proper market hour representation in all intraday timeframes
                 for candle in candles:
@@ -683,7 +683,7 @@ class BrokerData:
                 # Log sample data for debugging
                 if not result_df.empty and "timestamp" in result_df.columns:
                     sample_timestamp = result_df["timestamp"].iloc[0]
-                    ist_tz = pytz.timezone("Asia/Kolkata")
+                    ist_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
                     sample_dt = datetime.fromtimestamp(sample_timestamp, tz=ist_tz)
                     logger.info(f"First row timestamp: {sample_timestamp} ({sample_dt})")
 
@@ -756,7 +756,7 @@ class BrokerData:
                             new_index = []
                             for dt in weekly_df.index:
                                 # Create a new datetime with the same date but at 9:15 AM
-                                ist_tz = pytz.timezone("Asia/Kolkata")
+                                ist_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
                                 market_open = datetime(dt.year, dt.month, dt.day, 9, 15, 0)
                                 market_open = ist_tz.localize(market_open)
                                 new_index.append(market_open)
@@ -813,7 +813,7 @@ class BrokerData:
 
                                 if not week_data.empty:
                                     # Create market open time for the first day of the week
-                                    ist_tz = pytz.timezone("Asia/Kolkata")
+                                    ist_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
                                     market_open = datetime(
                                         week_start.year, week_start.month, week_start.day, 9, 15, 0
                                     )
@@ -894,7 +894,7 @@ class BrokerData:
                 sample_timestamps = result_df["timestamp"].head(3).tolist()
                 sample_times = []
                 for ts in sample_timestamps:
-                    dt = datetime.fromtimestamp(ts, tz=pytz.timezone("Asia/Kolkata"))
+                    dt = datetime.fromtimestamp(ts, tz=pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
                     sample_times.append(dt.strftime("%Y-%m-%d %H:%M:%S%z"))
 
                 logger.info(f"Final format - timestamp column values: {sample_timestamps}")

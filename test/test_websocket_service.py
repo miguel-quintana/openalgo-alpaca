@@ -65,7 +65,7 @@ def format_timestamp(timestamp):
         # Format in IST timezone
         import pytz
 
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         dt_ist = dt.replace(tzinfo=pytz.UTC).astimezone(ist)
         return dt_ist.strftime("%I:%M:%S %p")
     return "N/A"

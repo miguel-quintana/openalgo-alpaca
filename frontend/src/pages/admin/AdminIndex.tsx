@@ -185,7 +185,7 @@ export default function AdminIndex() {
             </li>
             <li>
               <strong>Market Holidays:</strong> Maintain the holiday calendar for all supported
-              exchanges (NSE, BSE, NFO, BFO, MCX, CDS, BCD).
+              exchanges (NSE, BSE, NFO, BFO, MCX, CDS, BCD, US, OPRA).
             </li>
             <li>
               <strong>Market Timings:</strong> Configure trading session timings for each exchange,

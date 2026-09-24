@@ -169,21 +169,19 @@ def get_contract_expiry(symbol, exchange):
     return get_expiry_from_database(symbol, exchange)
 
 
-# Exchange close times (IST) used for expiry-day settlement. Distinct from the
+# Exchange close times (Local Time) used for expiry-day settlement. Distinct from the
 # MIS square-off times in sandbox config (15:15 etc.), which are deliberately
 # BEFORE close -- an expiring contract trades right up to the closing bell.
 EXCHANGE_CLOSE_TIMES = {
-    # 15:40, not 15:30: SEBI's Closing Auction Session (effective 2026-08-03)
-    # pauses continuous trading in the cash segment at 15:15 and derives its
-    # close by auction, while the derivatives segment keeps trading to roughly
-    # 15:40. Settling an expiring contract at 15:30 would close it ten minutes
-    # before it actually stops trading.
+    # 15:40, not 15:30: SEBI's Closing Auction Session
     "NFO": dt_time(15, 40),
     "BFO": dt_time(15, 40),
     "CDS": dt_time(17, 0),
     "BCD": dt_time(17, 0),
     "MCX": dt_time(23, 30),
     "NCDEX": dt_time(17, 0),
+    "US": dt_time(16, 0),
+    "OPRA": dt_time(16, 0),
 }
 DEFAULT_CLOSE_TIME = dt_time(15, 30)
 
@@ -226,7 +224,7 @@ def is_contract_expired_now(expiry_date, exchange, now=None):
     if expiry_date is None:
         return False
 
-    ist = pytz.timezone("Asia/Kolkata")
+    ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     now = now or datetime.now(ist)
     today = now.date()
 
@@ -1458,7 +1456,7 @@ def catchup_missed_settlements():
         cleanup_expired_contracts()
 
         # Then handle CNC T+1 settlement
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         today = datetime.now(ist).date()
         cutoff_time = datetime.combine(today, datetime.min.time())
 

@@ -24,6 +24,7 @@ const allBrokers = [
   { id: 'compositedge', name: 'CompositEdge', authType: 'oauth' },
   { id: 'dhan', name: 'Dhan', authType: 'oauth' },
   { id: 'deltaexchange', name: 'Delta Exchange', authType: 'totp' },
+  { id: 'alpaca', name: 'Alpaca', authType: 'totp' },
   { id: 'indmoney', name: 'IndMoney', authType: 'totp' },
   { id: 'dhan_sandbox', name: 'Dhan (Sandbox)', authType: 'totp' },
   { id: 'definedge', name: 'Definedge', authType: 'totp' },
@@ -158,6 +159,12 @@ export default function BrokerSelect() {
       case 'zebu':
         // Brokers using callback route (form-based or redirect-based)
         loginUrl = `/${selectedBroker}/callback`
+        break
+
+      case 'alpaca':
+        // Route via backend callback endpoint to centralize URL generation and
+        // avoid provider-specific redirect parameter parsing differences.
+        loginUrl = redirect_url
         break
 
       case 'iiflcapital':

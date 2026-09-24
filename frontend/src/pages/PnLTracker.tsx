@@ -2,7 +2,6 @@ import { AlertTriangle, Camera, RefreshCw, TrendingDown, TrendingUp } from 'luci
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { makeFormatCurrency } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { showToast } from '@/utils/toast'
@@ -66,7 +65,22 @@ export default function PnLTracker() {
   const { mode } = useThemeStore()
   const isDarkMode = mode === 'dark'
   const { user } = useAuthStore()
-  const formatCurrency = useMemo(() => makeFormatCurrency(user?.broker), [user?.broker])
+  const formatCurrency = useMemo(() => {
+    const locale = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+    
+    // Automatically infer USD for US brokers if VITE_APP_CURRENCY isn't explicitly set in .env
+    const isUSBroker = ['schwab', 'alpaca', 'tradier'].includes(user?.broker?.toLowerCase() || '')
+    const currency = import.meta.env.VITE_APP_CURRENCY || (isUSBroker ? 'USD' : 'INR')
+
+    return (value: number) => {
+        return new Intl.NumberFormat(locale, {
+            style: 'currency',
+            currency: currency,
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(value)
+    }
+  }, [user?.broker])
 
   // State
   const [isLoading, setIsLoading] = useState(false)
@@ -152,11 +166,14 @@ export default function PnLTracker() {
         secondsVisible: false,
         tickMarkFormatter: (time: number) => {
           const date = new Date(time * 1000)
-          const istOffset = 5.5 * 60 * 60 * 1000
-          const istDate = new Date(date.getTime() + istOffset)
-          const hours = istDate.getUTCHours().toString().padStart(2, '0')
-          const minutes = istDate.getUTCMinutes().toString().padStart(2, '0')
-          return `${hours}:${minutes}`
+          const timeZone = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+          const locale = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+          return new Intl.DateTimeFormat(locale, {
+            timeZone: timeZone,
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          }).format(date)
         },
       },
       crosshair: {

@@ -218,7 +218,7 @@ class WhatsAppUserPreference(Base):
     daily_summary = Column(Boolean, default=True)
     summary_time = Column(String(10), default="18:00")
     language = Column(String(10), default="en")
-    timezone = Column(String(50), default="Asia/Kolkata")
+    timezone = Column(String(50), default=os.getenv("TIMEZONE", "Asia/Kolkata"))
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -226,25 +226,41 @@ class WhatsAppUserPreference(Base):
 
 
 def _ensure_columns(table: str, columns: dict[str, str]) -> None:
-    """Idempotent SQLite ADD COLUMN migration. SQLAlchemy's create_all is
-    additive at the TABLE level but does not retro-fit new columns onto an
-    existing table — we have to issue ALTER TABLE ourselves. Safe to run
-    every boot: PRAGMA table_info is cheap and ADD COLUMN is skipped if
-    the column already exists. PostgreSQL/MySQL backends would need their
-    own dialect-specific handling; this branch is SQLite-only because that
-    is the only supported DATABASE_URL today."""
-    if "sqlite" not in (DATABASE_URL or ""):
-        return
+    """Idempotent ADD COLUMN migration supporting SQLite and PostgreSQL. 
+    SQLAlchemy's create_all is additive at the TABLE level but does not 
+    retro-fit new columns onto an existing table — we have to issue ALTER TABLE 
+    ourselves. Safe to run every boot.
+    """
     from sqlalchemy import text
 
+    # Fail-safe guard for unexpected engine backends
+    if engine.name not in ("sqlite", "postgresql"):
+        logger.warning(f"Unsupported database engine for migration: {engine.name}")
+        return
+
     with engine.connect() as conn:
-        existing = {
-            row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))
-        }
-        for col_name, col_type in columns.items():
-            if col_name not in existing:
+        # 1. Fetch existing columns dynamically based on the active driver
+        if engine.name == "sqlite":
+            existing = {
+                row for row in conn.execute(text(f"PRAGMA table_info({table})"))
+            }
+        else:  # postgresql
+            # Using bind parameters to prevent SQL injection on user values
+            query = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = :table
+            """)
+            existing = {row for row in conn.execute(query, {"table": table})}
+
+        # 2. Iteratively check and append columns if missing
+        for col_name, col_type in columns.items():            
+            if (col_name, ) not in existing:
                 logger.info("WhatsApp DB: adding missing column %s.%s", table, col_name)
+                # Table names and column configurations are structurally injected 
+                # safely since they represent application schema definitions
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"))
+        
         conn.commit()
 
 
@@ -695,7 +711,7 @@ def get_user_preferences(whatsapp_jid: str) -> dict[str, Any]:
                 "daily_summary": True,
                 "summary_time": "18:00",
                 "language": "en",
-                "timezone": "Asia/Kolkata",
+                "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
             }
         else:
             result = {
@@ -757,15 +773,37 @@ def update_user_preferences(whatsapp_jid: str, updates: dict[str, Any]) -> bool:
 def log_command(whatsapp_jid: str, command: str, parameters: dict | None = None) -> None:
     try:
         params_json = json.dumps(parameters) if parameters else None
+        
+        # 1. Ensure user exists to satisfy the foreign key constraint
+        user = db_session.query(WhatsAppUser).filter_by(whatsapp_jid=whatsapp_jid).first()
+        if not user:
+            # Extract E.164 phone digits directly from the JID string
+            phone = whatsapp_jid.split("@")[0] if "@" in whatsapp_jid else whatsapp_jid
+            
+            # Fetch the bot owner's username for the required column
+            config = db_session.query(WhatsAppConfig).filter_by(id=1).first()
+            owner_username = config.owner_username if config and config.owner_username else "admin"
+            
+            # Create the missing user record with all required non-nullable fields
+            user = WhatsAppUser(
+                whatsapp_jid=whatsapp_jid,
+                phone_number=phone,
+                openalgo_username=owner_username
+            )
+            db_session.add(user)
+            db_session.add(WhatsAppUserPreference(whatsapp_jid=whatsapp_jid))
+            db_session.flush()
+
+        # 2. Insert the command log now that the parent user row is guaranteed to exist
         db_session.add(
             WhatsAppCommandLog(
                 whatsapp_jid=whatsapp_jid, command=command, parameters=params_json
             )
         )
-        user = db_session.query(WhatsAppUser).filter_by(whatsapp_jid=whatsapp_jid).first()
-        if user:
-            user.last_command_at = func.now()
+        
+        user.last_command_at = func.now()
         db_session.commit()
+        
     except Exception:
         logger.exception("Failed to log WhatsApp command")
         db_session.rollback()

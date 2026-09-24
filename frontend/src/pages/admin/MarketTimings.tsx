@@ -122,6 +122,8 @@ export default function MarketTimingsPage() {
       NCO: 'bg-emerald-500',
       CDS: 'bg-orange-500',
       BCD: 'bg-pink-500',
+      US: 'bg-blue-600',
+      OPRA: 'bg-indigo-500',
     }
     return colors[exchange] || 'bg-gray-500'
   }
@@ -371,6 +373,21 @@ export default function MarketTimingsPage() {
               <ul className="list-disc list-inside space-y-1">
                 <li>Normal market: 09:00 - 23:55</li>
                 <li>Extended trading into late evening</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-foreground mb-2">US Equities (US)</h4>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Pre-market: 04:00 - 09:30</li>
+                <li>Normal market: 09:30 - 16:00</li>
+                <li>Post-market: 16:00 - 20:00</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-foreground mb-2">US Options (OPRA)</h4>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Normal market: 09:30 - 16:00</li>
+                <li>Extended ETFs (e.g., SPY): 09:30 - 16:15</li>
               </ul>
             </div>
           </div>

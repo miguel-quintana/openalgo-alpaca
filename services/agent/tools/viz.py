@@ -81,6 +81,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+import os
+
 from services import history_service
 from services.agent.prompts import wrap_tool_result
 from services.agent.tools.base import (
@@ -778,7 +780,7 @@ class VizToolkit(OpenAlgoToolkit):
             "start_date": start,
             "end_date": end,
             "source": source,
-            "timezone": "Asia/Kolkata",
+            "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
             "bar_count": len(bars),
             "bars": bars,
             "indicators": overlays,

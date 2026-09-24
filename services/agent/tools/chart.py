@@ -64,6 +64,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+import os
+
 from agno.exceptions import RetryAgentRun
 
 from services.agent import chart_contract as cc
@@ -310,7 +312,7 @@ class ChartToolkit(OpenAlgoToolkit):
             "visible_from": ist_label(view.visible_from),
             "visible_to": ist_label(view.visible_to),
             "last_price": view.last_price,
-            "timezone": "Asia/Kolkata",
+            "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
             "indicators": [dict(item) for item in view.indicators],
             "operator_drawings": [
                 {
@@ -986,7 +988,7 @@ class ChartToolkit(OpenAlgoToolkit):
             "symbol": symbol,
             "exchange": exchange,
             "interval": interval,
-            "timezone": "Asia/Kolkata",
+            "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
             "bars_fetched": len(cached.bars),
             "bars_analysed": hi - lo + 1,
             "window_from": ist_label(cached.bars.times[lo]),

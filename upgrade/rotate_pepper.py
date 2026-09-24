@@ -443,23 +443,48 @@ class Rotator:
 
 # ---------- Main ----------
 
+import argparse
+import sys
+import os
+import secrets
+import shutil
+from datetime import datetime
+from sqlalchemy import create_engine, text
+
 def main():
     parser = argparse.ArgumentParser(description="Rotate API_KEY_PEPPER and re-encrypt all dependent fields")
     parser.add_argument("--yes", action="store_true", help="Skip the interactive confirmation prompt")
-    parser.add_argument("--db", help="Path to SQLite DB (defaults to DATABASE_URL from .env)")
+    parser.add_argument("--db", help="Database connection URL (defaults to DATABASE_URL from .env)")
     parser.add_argument("--env", help="Path to .env file to update (defaults to project root .env)")
     parser.add_argument("--dry-run", action="store_true", help="Run rotation in a DB transaction but rollback at the end (no .env update)")
     args = parser.parse_args()
 
     env_path = args.env or ENV_PATH
-    db_path = args.db or _resolve_db_path()
+    
+    # 1. Resolve database location using a connection URL instead of a raw file path
+    db_url = args.db or os.getenv("DATABASE_URL")
+    if not db_url:
+        sys.stderr.write("DATABASE_URL is not set in environment or arguments. Aborting.\n")
+        return 2
+
+    # Instantiate the universal SQLAlchemy engine
+    engine = create_engine(db_url)
+    dialect = engine.name
+
     old_pepper = os.getenv("API_KEY_PEPPER", "")
     if not old_pepper:
         sys.stderr.write("API_KEY_PEPPER is not set in .env. Aborting.\n")
         return 2
-    if not os.path.exists(db_path):
-        sys.stderr.write(f"Database not found at {db_path}. Aborting.\n")
-        return 2
+
+    # File path validation only applies to local SQLite setups
+    if dialect == "sqlite":
+        # Extract the actual file path from the sqlite:/// reference
+        db_file = db_url.replace("sqlite:///", "").replace("sqlite://", "")
+        if db_file and db_file != ":memory:" and not os.path.exists(db_file):
+            sys.stderr.write(f"SQLite Database not found at {db_file}. Aborting.\n")
+            return 2
+    else:
+        db_file = None
 
     new_pepper = secrets.token_hex(32)
 
@@ -467,7 +492,8 @@ def main():
     print("=" * 72)
     print("  OpenAlgo PEPPER Rotation Migration")
     print("=" * 72)
-    print(f"  DB path     : {db_path}")
+    print(f"  DB Engine   : {dialect}")
+    print(f"  DB Target   : {db_url.split('@')[-1] if '@' in db_url else db_url}") # Hide credentials in logs
     print(f"  .env path   : {env_path}")
     print(f"  Mode        : {'DRY RUN (no changes persisted)' if args.dry_run else 'DESTRUCTIVE'}")
     print()
@@ -492,42 +518,49 @@ def main():
             print("Aborted.")
             return 1
 
-    # Backup DB
+    # 2. Database Backup handling (Conditional based on backend type)
     if not args.dry_run:
-        backup_dir = os.path.join(os.path.dirname(db_path), "backups")
-        os.makedirs(backup_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = os.path.join(backup_dir, f"openalgo.db.before-rotate-pepper-{ts}")
-        shutil.copy2(db_path, backup_path)
-        print(f"  DB backup   : {backup_path}")
-
-    # Connect (single transaction)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON")
+        if dialect == "sqlite" and db_file and db_file != ":memory:":
+            backup_dir = os.path.join(os.path.dirname(db_file), "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = os.path.join(backup_dir, f"openalgo.db.before-rotate-pepper-{ts}")
+            shutil.copy2(db_file, backup_path)
+            print(f"  DB backup   : {backup_path}")
+        else:
+            print("  DB backup   : [Notice] Server-side or non-file backend deployment. Ensure backup via pg_dump if needed.")
 
     print()
     print("  Rotating ciphertexts...")
     print()
-    rotator = Rotator(conn, old_pepper, new_pepper)
-    try:
-        rotator.rotate_all()
-    except Exception as e:
-        conn.rollback()
-        sys.stderr.write(f"\n  FAILED: {e}\n  Rolled back. DB unchanged.\n")
-        conn.close()
-        return 1
 
-    if args.dry_run:
-        conn.rollback()
-        conn.close()
-        print()
-        print("  Dry-run complete. Stats (would have been applied):")
-        for k, v in rotator.stats.items():
-            print(f"    {k:48s} {v:>5d}")
-        return 0
-
-    conn.commit()
-    conn.close()
+    # 3. Handle processing within a single unified engine connection context
+    with engine.connect() as conn:
+        # Enforce foreign key constraints based on the SQL flavor
+        if dialect == "sqlite":
+            conn.execute(text("PRAGMA foreign_keys = ON"))
+        
+        # Instantiate your Rotator class (pass the SQLAlchemy conn proxy)
+        rotator = Rotator(conn, old_pepper, new_pepper)
+        
+        try:
+            # We open an explicit transaction block to guarantee atomic rollback
+            with conn.begin():
+                rotator.rotate_all()
+                
+                if args.dry_run:
+                    # Forcing a failure to trigger an automatic block rollback
+                    raise ValueError("DRY_RUN_ROLLBACK")
+        except Exception as e:
+            if str(e) == "DRY_RUN_ROLLBACK":
+                print()
+                print("  Dry-run complete. Stats (would have been applied):")
+                for k, v in rotator.stats.items():
+                    print(f"    {k:48s} {v:>5d}")
+                return 0
+            else:
+                sys.stderr.write(f"\n  FAILED: {e}\n  Rolled back. DB unchanged.\n")
+                return 1
 
     # Update .env atomically
     print()
@@ -557,14 +590,6 @@ def main():
     print("    2. Open the web UI and go to /auth/reset-password")
     print("    3. Reset your password using your TOTP code")
     print("    4. Log in normally with the new password")
-    print()
-    print("  Your TOTP secret was preserved (re-encrypted, not regenerated).")
-    print("  Your broker session is preserved (broker token re-encrypted).")
-    print("  Your TradingView/external API keys are preserved (re-encrypted +")
-    print("  api_key_hash re-derived). External integrations continue to work.")
-    print()
-    print("  The previous PEPPER is no longer in your .env. The DB no longer")
-    print("  contains anything decryptable with the public sample value.")
     print()
     return 0
 

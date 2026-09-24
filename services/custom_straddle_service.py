@@ -14,6 +14,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import pandas as pd
+import os
 import pytz
 
 from database.token_db_enhanced import fno_search_symbols
@@ -63,7 +64,7 @@ def get_custom_straddle_simulation(
         Tuple of (success, response_dict, status_code)
     """
     try:
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         # Generous calendar window; pnl_series is post-filtered to the last
         # N distinct trading dates that actually returned candles.
         start_date_str, end_date_str = _resolve_trading_window(days, ist)

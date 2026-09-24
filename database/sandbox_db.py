@@ -30,7 +30,7 @@ from sqlalchemy.sql import func
 #: stamps datetime.now(IST) and SQLite drops the offset on the way in. GTT rows
 #: and the GTT manager's clock use the same helper so they compare and display
 #: consistently, whatever timezone the host machine runs in.
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 def ist_now() -> datetime:
@@ -449,19 +449,47 @@ def _migrate_add_order_gtt_leg_id():
 
     try:
         with engine.connect() as conn:
-            existing = {row[1] for row in conn.execute(text("PRAGMA table_info(sandbox_orders)"))}
+            # 1. Fetch existing columns dynamically based on the database engine
+            if engine.name == "sqlite":
+                existing = {row[1] for row in conn.execute(text("PRAGMA table_info(sandbox_orders)"))}
+            elif engine.name == "postgresql":
+                # PostgreSQL requires lowercase table names and string parameters
+                query = text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'sandbox_orders'
+                """)
+                existing = {row[0] for row in conn.execute(query)}
+            else:
+                # Fallback or unsupported engine
+                logger.warning(f"Unsupported database engine for migration: {engine.name}")
+                return
+
+            # 2. Check if table is empty/missing or if the column already exists
             if not existing or "gtt_leg_id" in existing:
                 return
+
+            # 3. Add the column (Syntax is identical for SQLite and PostgreSQL)
             conn.execute(text("ALTER TABLE sandbox_orders ADD COLUMN gtt_leg_id INTEGER"))
-            # SQLite cannot add a UNIQUE column by ALTER, so the constraint is
-            # created as an index afterwards. Partial, because every non-GTT
-            # order leaves this NULL and many NULLs must stay allowed.
-            conn.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_orders_gtt_leg "
-                    "ON sandbox_orders(gtt_leg_id) WHERE gtt_leg_id IS NOT NULL"
+            
+            # 4. Create the partial unique index
+            if engine.name == "sqlite":
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_orders_gtt_leg "
+                        "ON sandbox_orders(gtt_leg_id) WHERE gtt_leg_id IS NOT NULL"
+                    )
                 )
-            )
+            elif engine.name == "postgresql":
+                # PostgreSQL doesn't use "IF NOT EXISTS" for indexes on older versions 
+                # but standard syntax works natively with the partial WHERE clause
+                conn.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_orders_gtt_leg "
+                        "ON sandbox_orders(gtt_leg_id) WHERE gtt_leg_id IS NOT NULL"
+                    )
+                )
+
             conn.commit()
             logger.info("Added sandbox_orders.gtt_leg_id")
     except Exception as e:
@@ -481,17 +509,35 @@ def _migrate_add_gtt_trigger_direction():
 
     try:
         with engine.connect() as conn:
-            existing = {
-                row[1] for row in conn.execute(text("PRAGMA table_info(sandbox_gtt_legs)"))
-            }
+            # 1. Fetch existing columns dynamically based on the database engine
+            if engine.name == "sqlite":
+                existing = {
+                    row[1] for row in conn.execute(text("PRAGMA table_info(sandbox_gtt_legs)"))
+                }
+            elif engine.name == "postgresql":
+                query = text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'sandbox_gtt_legs'
+                """)
+                existing = {row[0] for row in conn.execute(query)}
+            else:
+                logger.warning(f"Unsupported database engine for migration: {engine.name}")
+                return
+
+            # 2. Check if table is empty/missing or if the column already exists
             if not existing or "trigger_direction" in existing:
                 return
+
+            # 3. Add the column with default value (Compatible with both engines)
             conn.execute(
                 text(
                     "ALTER TABLE sandbox_gtt_legs ADD COLUMN trigger_direction "
                     "VARCHAR(5) NOT NULL DEFAULT 'below'"
                 )
             )
+            
+            # 4. Backfill data using a standard correlated subquery
             # Backfill from the data rather than leaving every existing leg at
             # the column default. A leg whose trigger sits above the price
             # recorded when the GTT was placed is a target leg and fires on a
@@ -524,7 +570,8 @@ def init_default_config():
         {
             "config_key": "starting_capital",
             "config_value": "10000000.00",
-            "description": "Starting sandbox capital in INR (₹1 Crore) - Min: ₹1000",
+            # Removed hardcoded INR; frontend will automatically replace (INR) with (USD) based on locale
+            "description": "Starting sandbox capital in base currency (INR)",
         },
         {
             "config_key": "reset_day",
@@ -565,6 +612,16 @@ def init_default_config():
             "config_key": "ncdex_square_off_time",
             "config_value": "17:00",
             "description": "Square-off time for NCDEX MIS positions (IST)",
+        },
+        {
+            "config_key": "us_square_off_time",
+            "config_value": "15:45",
+            "description": "Square-off time for US equities MIS positions (IST)",
+        },
+        {
+            "config_key": "opra_square_off_time",
+            "config_value": "15:45",
+            "description": "Square-off time for OPRA options MIS positions (IST)",
         },
         {
             "config_key": "equity_mis_leverage",
@@ -641,13 +698,18 @@ def init_default_config():
                 db_session.add(config_obj)
                 db_session.commit()
                 logger.debug(f"Added default config: {config['config_key']}")
+            else:
+                # Forcefully sync the description for existing databases
+                if existing.description != config["description"]:
+                    existing.description = config["description"]
+                    db_session.commit()
+                    logger.debug(f"Repopulated description for config: {config['config_key']}")
         except IntegrityError:
             db_session.rollback()
             logger.debug(f"Config already exists: {config['config_key']}")
         except Exception as e:
             db_session.rollback()
             logger.exception(f"Error adding config {config['config_key']}: {e}")
-
 
 def get_config(config_key, default=None):
     """Get configuration value by key"""

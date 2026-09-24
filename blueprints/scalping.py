@@ -17,6 +17,7 @@ import math
 import re
 from datetime import datetime, timedelta
 
+import os
 import pytz
 from flask import Blueprint, jsonify, request, session
 
@@ -42,7 +43,7 @@ SCALPING_STRATEGY = "Scalping"
 # Chart history: IST timezone + per-interval lookback (trading days). The bar
 # time carries a +5h30m offset so lightweight-charts (which renders UTC) shows
 # IST, and the client's live forming candle aligns with the history bars.
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 IST_OFFSET_SECONDS = 19800
 CHART_INTERVAL_TRADING_DAYS = {"1m": 1, "5m": 3, "15m": 9}
 

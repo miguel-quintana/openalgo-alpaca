@@ -74,6 +74,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
+import os
 from zoneinfo import ZoneInfo
 
 from services.agent import prompts
@@ -165,7 +166,7 @@ MAX_CITATIONS = 20
 MAX_QUERY_CHARS = 400
 
 #: Indian markets, Indian trading day. Used to date the persistent cap.
-IST = ZoneInfo("Asia/Kolkata")
+IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 # Taint decisions, recorded in the result and in the log line.
 DECISION_VERBATIM = "verbatim"

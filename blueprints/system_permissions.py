@@ -8,6 +8,7 @@ Cross-platform compatible (Windows, Linux, macOS).
 import os
 import platform
 import stat
+import re
 
 from flask import Blueprint, jsonify
 
@@ -18,6 +19,18 @@ logger = get_logger(__name__)
 
 system_permissions_bp = Blueprint("system_permissions_bp", __name__, url_prefix="/api/system")
 
+def is_database_uri(path_str: str) -> bool:
+    """Check if path string is a remote database connection URI."""
+    if not path_str:
+        return False
+    s = str(path_str).lower()
+    return s.startswith(("postgresql://", "postgres://", "mysql://", "mariadb://", "oracle://", "mssql://"))
+
+def sanitize_db_uri(uri_or_path: str) -> str:
+    """Mask passwords in database connection URIs."""
+    if not uri_or_path:
+        return ""
+    return re.sub(r"(://[^:]+:)[^@]+(@)", r"\1****\2", str(uri_or_path))
 
 def get_permission_checks():
     """
@@ -39,31 +52,25 @@ def get_permission_checks():
     sandbox_db = extract_db_path("SANDBOX_DATABASE_URL", "db/sandbox.db")
     historify_db = os.getenv("HISTORIFY_DATABASE_URL", "db/historify.duckdb")
 
-    # Extract db directory from main database path
-    db_dir = os.path.dirname(main_db) if main_db else "db"
+    # Extract db directory from main database path. Fallback to "db" if using remote DB.
+    db_dir = os.path.dirname(main_db) if main_db and not is_database_uri(main_db) else "db"
 
-    # .env contains APP_KEY, API_KEY_PEPPER, FERNET_SALT, BROKER_API_SECRET —
-    # ALL secrets. Expected mode is 0o600 (rw for owner only) on every
-    # platform. The previous Docker-specific 0o644 expectation is a
-    # security regression: it makes the file world-readable and lets any
-    # local user on the host run `cat .env` to harvest credentials.
-    #
-    # The historical justification for 0o644 inside Docker (issue #960:
-    # ".env unreadable to container's appuser when host file is root-owned")
-    # is obsolete. Every official install script now does
-    # `chown 1000:1000 .env && chmod 600 .env`, and the Dockerfile pins
-    # appuser to UID 1000 so the bind-mounted file is owner-readable
-    # without needing world-read.
     env_expected_mode = 0o600
+
+    # Helper to dynamically name the database engine in the UI
+    def db_desc(name, path):
+        if is_database_uri(path):
+            return f"{name} database (PostgreSQL)"
+        return f"{name} database file (SQLite)"
 
     # Define expected permissions for each path
     # Format: (relative_path, expected_unix_mode, description, is_sensitive)
     return [
         (db_dir, 0o755, "Database directory", False),
-        (main_db, 0o644, "Main database file (SQLite)", False),
-        (latency_db, 0o644, "Latency database file (SQLite)", False),
-        (logs_db, 0o644, "Logs database file (SQLite)", False),
-        (sandbox_db, 0o644, "Sandbox database file (SQLite)", False),
+        (main_db, 0o644, db_desc("Main", main_db), False),
+        (latency_db, 0o644, db_desc("Latency", latency_db), False),
+        (logs_db, 0o644, db_desc("Logs", logs_db), False),
+        (sandbox_db, 0o644, db_desc("Sandbox", sandbox_db), False),
         (historify_db, 0o644, "Historical data database (DuckDB)", False),
         (".env", env_expected_mode, "Environment configuration (sensitive)", True),
         ("log", 0o755, "Log directory", False),
@@ -74,7 +81,6 @@ def get_permission_checks():
         ("strategies/examples", 0o755, "Strategy examples directory", False),
         ("tmp", 0o755, "Temporary files directory", False),
     ]
-
 
 def get_base_path():
     """Get the base path of the OpenAlgo application."""
@@ -154,6 +160,26 @@ def check_permission(path: str, expected_mode: int, is_sensitive: bool) -> dict:
 
     Returns dict with status and details.
     """
+    # Intercept remote database URIs immediately
+    if is_database_uri(path):
+        sanitized = sanitize_db_uri(path)
+        return {
+            "path": sanitized,
+            "full_path": sanitized,
+            "exists": True,
+            "expected_mode": "N/A",
+            "expected_rwx": "Managed Connection",
+            "is_sensitive": True,
+            "is_correct": True,
+            "issue": None,
+            "warning": None,
+            "actual_mode": "N/A",
+            "actual_rwx": "Database Server",
+            "is_directory": False,
+            "readable": True,
+            "writable": True
+        }
+        
     base_path = get_base_path()
     full_path = os.path.join(base_path, path)
     is_windows = platform.system() == "Windows"
@@ -287,6 +313,10 @@ def fix_permissions():
         failed = []
 
         for path, expected_mode, description, is_sensitive in get_permission_checks():
+            # Skip remote database URIs entirely during fix routine
+            if is_database_uri(path):
+                continue
+
             full_path = os.path.join(base_path, path)
 
             # Skip if path doesn't exist - we'll create directories but not files

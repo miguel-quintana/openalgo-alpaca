@@ -56,7 +56,7 @@ def convert_timestamp(timestamp: float, interval: str) -> str | tuple[str, str]:
     dt = datetime.fromtimestamp(timestamp, tz=UTC)
 
     # Convert to IST
-    ist = pytz.timezone("Asia/Kolkata")
+    ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     dt_ist = dt.astimezone(ist)
 
     # For daily data: just return the date

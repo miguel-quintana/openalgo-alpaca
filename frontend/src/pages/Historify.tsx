@@ -270,20 +270,25 @@ export default function Historify() {
     computed_intervals: string[]
     all_intervals: string[]
   } | null>(null)
-  const [exchanges, setExchanges] = useState<string[]>([
-    'NSE',
-    'BSE',
-    'NFO',
-    'BFO',
-    'MCX',
-    'NCO',
-    'CDS',
-    'BCD',
-    'NSE_INDEX',
-    'BSE_INDEX',
-    'GLOBAL_INDEX',
-    'CRYPTO',
-  ])
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+  const initialExchanges =
+    LOCALE === 'en-US'
+      ? ['US', 'OPRA', 'CRYPTO']
+      : [
+          'NSE',
+          'BSE',
+          'NFO',
+          'BFO',
+          'MCX',
+          'NCO',
+          'CDS',
+          'BCD',
+          'NSE_INDEX',
+          'BSE_INDEX',
+          'GLOBAL_INDEX',
+          'CRYPTO',
+        ]
+  const [exchanges, setExchanges] = useState<string[]>(initialExchanges)
   const [stats, setStats] = useState<Stats>({
     database_size_mb: 0,
     total_records: 0,
@@ -291,12 +296,35 @@ export default function Historify() {
     watchlist_count: 0,
   })
 
+	// 1. Define environment variables with fallbacks
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata';
+  // 2. State to hold the dynamic short timezone code (e.g., IST)
+  const [shortTZ, setShortTZ] = useState<string>('IST')
+  // 3. Resolve the configured timezone abbreviation dynamically
+  useEffect(() => {
+    try {
+      const formatter = new Intl.DateTimeFormat(LOCALE, {
+        timeZone: TIMEZONE,
+        timeZoneName: 'short'
+      })
+      const parts = formatter.formatToParts(new Date())
+      const tzPart = parts.find(part => part.type === 'timeZoneName')
+      if (tzPart) {
+        setShortTZ(tzPart.value)
+      }
+    } catch (error) {
+      console.error("Invalid configuration for locale or timezone:", error)
+    }
+  }, [])
+
+
+
   // Tab state
   const [activeTab, setActiveTab] = useState<string>('watchlist')
 
   // Symbol search state
   const [newSymbol, setNewSymbol] = useState('')
-  const [newExchange, setNewExchange] = useState('NSE')
+  const [newExchange, setNewExchange] = useState('US')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [showSearchResults, setShowSearchResults] = useState(false)
   const searchContainerRef = useRef<HTMLDivElement>(null)
@@ -921,7 +949,7 @@ export default function Historify() {
     const [h, m] = (schedule.time_of_day || '09:15').split(':').map(Number)
     const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h
     const ampm = h >= 12 ? 'PM' : 'AM'
-    return `Daily at ${hour12}:${m.toString().padStart(2, '0')} ${ampm} IST`
+    return `Daily at ${hour12}:${m.toString().padStart(2, '0')} ${ampm} ${shortTZ}`
   }
 
   const performSearch = async (query: string) => {
@@ -993,7 +1021,7 @@ export default function Historify() {
     const symbols = lines
       .map((line) => {
         const [symbol, exchange] = line.split(',').map((s) => s.trim().toUpperCase())
-        return { symbol, exchange: exchange || 'NSE' }
+        return { symbol, exchange: exchange || (LOCALE === 'en-US' ? 'US' : 'NSE') }
       })
       .filter((s) => s.symbol)
 
@@ -1027,7 +1055,6 @@ export default function Historify() {
       setIsBulkAdding(false)
     }
   }
-
   // FNO Discovery functions (disabled for now)
   // const loadFnoUnderlyings = async () => {
   //   try {
@@ -2581,12 +2608,12 @@ export default function Historify() {
                                 <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                                   {schedule.next_run_at && (
                                     <span>
-                                      Next: {new Date(schedule.next_run_at).toLocaleString()}
+                                      Next: {new Date(schedule.next_run_at).toLocaleString(LOCALE, { timeZone: TIMEZONE })}
                                     </span>
                                   )}
                                   {schedule.last_run_at && (
                                     <span>
-                                      Last: {new Date(schedule.last_run_at).toLocaleString()}
+                                      Last: {new Date(schedule.last_run_at).toLocaleString(LOCALE, { timeZone: TIMEZONE })}
                                     </span>
                                   )}
                                   <span>
@@ -2708,7 +2735,7 @@ export default function Historify() {
                                       {scheduleExecutions[schedule.id].map((exec) => (
                                         <TableRow key={exec.id}>
                                           <TableCell className="text-sm">
-                                            {new Date(exec.started_at).toLocaleString()}
+                                            {new Date(exec.started_at).toLocaleString(LOCALE, { timeZone: TIMEZONE })}
                                           </TableCell>
                                           <TableCell>
                                             <Badge
@@ -2869,7 +2896,7 @@ export default function Historify() {
               </div>
             ) : (
               <div>
-                <Label>Time of Day (IST)</Label>
+                <Label>Time of Day ({shortTZ})</Label>
                 <div className="flex gap-2 mt-1">
                   <Select
                     value={(() => {
@@ -2992,9 +3019,11 @@ export default function Historify() {
             </DialogDescription>
           </DialogHeader>
           <Textarea
-            placeholder="RELIANCE,NSE
-INFY,NSE
-NIFTY24DEC25000CE,NFO"
+            placeholder={
+              LOCALE === 'en-US'
+                ? 'AAPL,US\nTSLA,US\nBTCUSD,CRYPTO'
+                : 'RELIANCE,NSE\nINFY,NSE\nNIFTY24DEC25000CE,NFO'
+            }
             value={bulkAddText}
             onChange={(e) => setBulkAddText(e.target.value)}
             rows={8}
@@ -3010,7 +3039,6 @@ NIFTY24DEC25000CE,NFO"
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
       {/* Upload Dialog */}
       <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
         <DialogContent className="sm:max-w-md">

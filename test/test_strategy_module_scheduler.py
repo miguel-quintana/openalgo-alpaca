@@ -17,6 +17,8 @@ from unittest.mock import patch
 
 import pytest
 
+import os
+
 # restx_api first: see the note in test_strategy_module_order_dispatch.py.
 import restx_api  # noqa: F401
 from database import strategy_module_db as store
@@ -202,9 +204,9 @@ def test_the_timezone_reaches_both_the_scheduler_and_every_trigger():
     sid = _make()
     sched.sync_strategy_jobs(sid)
 
-    assert str(sched.get_scheduler().timezone) == "Asia/Kolkata"
+    assert str(sched.get_scheduler().timezone) == os.getenv("TIMEZONE", "Asia/Kolkata")
     for job_id in (sched.start_job_id(sid), sched.stop_job_id(sid)):
-        assert str(_job(job_id).trigger.timezone) == "Asia/Kolkata"
+        assert str(_job(job_id).trigger.timezone) == os.getenv("TIMEZONE", "Asia/Kolkata")
 
 
 def test_every_job_carries_the_project_job_defaults():

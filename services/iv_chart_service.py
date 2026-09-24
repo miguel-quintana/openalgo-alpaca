@@ -9,6 +9,7 @@ candle's close price. Returns IV time series suitable for charting.
 from datetime import datetime, timedelta
 
 import pandas as pd
+import os
 import pytz
 
 from database.token_db_enhanced import fno_search_symbols
@@ -102,7 +103,7 @@ def _convert_timestamp_to_ist(df):
     Convert timestamp column in a history DataFrame to IST datetime index.
     Returns the dataframe with 'datetime' index in IST, or None on failure.
     """
-    ist = pytz.timezone("Asia/Kolkata")
+    ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
     try:
         if "timestamp" not in df.columns:
@@ -169,7 +170,7 @@ def get_iv_chart_data(
         )
 
     try:
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         # Generous calendar window; the returned IV series is post-filtered
         # to the last N distinct trading dates that actually have data.
         start_date_str, end_date_str = _resolve_trading_window(days, ist)

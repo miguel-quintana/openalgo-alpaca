@@ -44,6 +44,33 @@ KEEP_FOREVER_TYPES = frozenset(
     }
 )
 
+def _extract_apikey_from_request(request_data):
+    """Safely extracts apikey regardless of whether payload is dict, list, or query string."""
+    try:
+        from flask import request
+        if hasattr(request, "args") and request.args.get("apikey"):
+            return request.args.get("apikey")
+    except Exception:
+        pass
+
+    if isinstance(request_data, dict):
+        return request_data.get("apikey")
+
+    if isinstance(request_data, list) and len(request_data) > 0 and isinstance(request_data[0], dict):
+        return request_data[0].get("apikey")
+
+    return None
+
+def _extract_symbol_from_request(request_data):
+    """Safely extracts symbol regardless of whether payload is dict or list."""
+    if isinstance(request_data, dict):
+        return request_data.get("symbol")
+        
+    if isinstance(request_data, list) and len(request_data) > 0 and isinstance(request_data[0], dict):
+        # For basket/margin requests, just log the symbol of the first leg
+        return request_data[0].get("symbol")
+
+    return None
 
 def _log_latency_async(
     api_key, order_id, user_id, symbol, order_type, latencies, status, error, broker=None
@@ -272,10 +299,10 @@ def track_latency(api_type):
                 # SQLite commit must not delay the order response.
                 _latency_log_executor.submit(
                     _log_latency_async,
-                    request_data.get("apikey"),
+                    _extract_apikey_from_request(request_data),
                     order_id,
                     g.get("user_id"),
-                    request_data.get("symbol"),
+                    _extract_symbol_from_request(request_data),
                     api_type,
                     {
                         "rtt": rtt,  # Round-trip time (comparable to Postman/Bruno)
@@ -286,7 +313,7 @@ def track_latency(api_type):
                     },
                     "SUCCESS" if status_code < 400 else "FAILED",
                     response_data.get("message") if status_code >= 400 else None,
-                    _session_broker() if not request_data.get("apikey") else None,
+                    _session_broker() if not _extract_apikey_from_request(request_data) else None,
                 )
 
                 return response
@@ -309,10 +336,10 @@ def track_latency(api_type):
                 has_request_data = "request_data" in locals()
                 _latency_log_executor.submit(
                     _log_latency_async,
-                    request_data.get("apikey") if has_request_data else None,
+                    _extract_apikey_from_request(request_data) if has_request_data else None,
                     "error",
                     g.get("user_id"),
-                    request_data.get("symbol") if has_request_data else None,
+                    _extract_symbol_from_request(request_data) if has_request_data else None,
                     api_type,
                     {
                         "rtt": rtt,
@@ -324,7 +351,7 @@ def track_latency(api_type):
                     "FAILED",
                     str(e),
                     _session_broker()
-                    if not (has_request_data and request_data.get("apikey"))
+                    if not (has_request_data and _extract_apikey_from_request(request_data))
                     else None,
                 )
                 raise

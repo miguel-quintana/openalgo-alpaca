@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+import os
 from zoneinfo import ZoneInfo
 
 from database import agent_db
@@ -144,7 +145,7 @@ DEFAULT_MAX_PROMPT_CHARS = 30000
 
 #: The operator's timezone. Indian markets, and every schedule in this platform,
 #: run on IST. This is not configuration, it is what the exchanges do.
-IST = ZoneInfo("Asia/Kolkata")
+IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 # ---------------------------------------------------------------------------

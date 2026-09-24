@@ -999,7 +999,7 @@ class BrokerData:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
 
             # Convert to IST and then to UTC for epoch
-            df["timestamp"] = df["timestamp"].dt.tz_localize("Asia/Kolkata")
+            df["timestamp"] = df["timestamp"].dt.tz_localize(os.getenv("TIMEZONE", "Asia/Kolkata"))
             df["timestamp"] = df["timestamp"].dt.tz_convert("UTC")
             df["timestamp"] = df["timestamp"].dt.tz_localize(None)
 

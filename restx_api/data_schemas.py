@@ -215,6 +215,7 @@ class MarketHolidaysSchema(Schema):
 class MarketTimingsSchema(Schema):
     apikey = fields.Str(required=True, validate=validate.Length(min=1, max=256))  # API Key for authentication
     date = fields.Str(required=True)  # Date in YYYY-MM-DD format
+    include_extended = fields.Boolean(required=False, load_default=True)
 
 
 class OptionSymbolRequest(Schema):

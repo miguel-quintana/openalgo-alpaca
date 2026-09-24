@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 
 import numpy as np
+import os
 import pytz
 from flask import Blueprint, Response, jsonify, render_template, request, session
 from sqlalchemy import func
@@ -17,22 +18,21 @@ logger = get_logger(__name__)
 
 latency_bp = Blueprint("latency_bp", __name__, url_prefix="/latency")
 
-
-def convert_to_ist(timestamp):
-    """Convert UTC timestamp to IST"""
+def convert_to_configured_tz(timestamp):
+    """Convert UTC timestamp to configured TIMEZONE"""
     if isinstance(timestamp, str):
         timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     utc = pytz.timezone("UTC")
-    ist = pytz.timezone("Asia/Kolkata")
+    target_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     if timestamp.tzinfo is None:
         timestamp = utc.localize(timestamp)
-    return timestamp.astimezone(ist)
+    return timestamp.astimezone(target_tz)
 
 
 def format_ist_time(timestamp):
-    """Format timestamp in IST with 12-hour format"""
-    ist_time = convert_to_ist(timestamp)
-    return ist_time.strftime("%d-%m-%Y %I:%M:%S %p")
+    """Format timestamp in configured timezone"""
+    tz_time = convert_to_configured_tz(timestamp)
+    return tz_time.strftime("%Y-%m-%d %I:%M:%S %p")
 
 
 def get_histogram_data(broker=None):
@@ -159,7 +159,7 @@ def latency_dashboard():
                 "total_latency_ms": log.total_latency_ms,
                 "status": log.status,
                 "error": log.error,
-                "timestamp": convert_to_ist(log.timestamp).isoformat(),
+                "timestamp": convert_to_configured_tz(log.timestamp).isoformat(),
             }
         )
 
@@ -183,7 +183,7 @@ def get_logs():
         return jsonify(
             [
                 {
-                    "timestamp": convert_to_ist(log.timestamp).isoformat(),
+                    "timestamp": convert_to_configured_tz(log.timestamp).isoformat(),
                     "id": log.id,
                     "order_id": log.order_id,
                     "broker": log.broker,

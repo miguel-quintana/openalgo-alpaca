@@ -3,8 +3,8 @@
 Fund Manager - Handles simulated capital and margin calculations
 
 Features:
-- ₹10,000,000 (1 Crore) starting capital (configurable)
-- Automatic reset via APScheduler on configured day/time (default: Sunday 00:00 IST)
+- {CURRENCY_SYMBOL}10,000,000 (1 Crore) starting capital (configurable)
+- Automatic reset via APScheduler on configured day/time (default: Sunday 00:00 Localtime)
 - Leverage-based margin calculations
 - Real-time available balance tracking
 
@@ -41,6 +41,29 @@ from utils.symbol_utils import is_future, is_option
 
 logger = get_logger(__name__)
 
+TIMEZONE = os.getenv("TIMEZONE", "Asia/Kolkata")
+LOCALE = os.getenv("LOCALE", "en-IN")
+
+
+def get_currency_symbol(locale_str: str) -> str:
+    """Infer the appropriate currency symbol based on the configured locale."""
+    if not locale_str:
+        return "{CURRENCY_SYMBOL}"
+    loc = locale_str.lower()
+    if "in" in loc:
+        return "{CURRENCY_SYMBOL}"
+    elif "us" in loc:
+        return "$"
+    elif "gb" in loc or "uk" in loc:
+        return "£"
+    elif any(e in loc for e in ["eu", "de", "fr", "es", "it", "nl"]):
+        return "€"
+    elif "jp" in loc:
+        return "¥"
+    return "{CURRENCY_SYMBOL}"
+
+
+CURRENCY_SYMBOL = get_currency_symbol(LOCALE)
 
 class FundManager:
     """Manages sandbox funds for sandbox mode"""
@@ -73,13 +96,13 @@ class FundManager:
                         today_realized_pnl=Decimal("0.00"),
                         unrealized_pnl=Decimal("0.00"),
                         total_pnl=Decimal("0.00"),
-                        last_reset_date=datetime.now(pytz.timezone("Asia/Kolkata")),
+                        last_reset_date=datetime.now(pytz.timezone(TIMEZONE)),
                         reset_count=0,
                     )
                     db_session.add(funds)
                     db_session.commit()
                     logger.info(
-                        f"Initialized funds for user {self.user_id} with ₹{self.starting_capital}"
+                        f"Initialized funds for user {self.user_id} with {CURRENCY_SYMBOL}{self.starting_capital}"
                     )
                     return True, "Funds initialized successfully"
                 else:
@@ -129,20 +152,20 @@ class FundManager:
             return None
 
     def _check_and_reset_funds(self, funds):
-        """Check if funds need to be reset (every Sunday at midnight IST)"""
+        """Check if funds need to be reset (every Sunday at midnight Localtime)"""
         try:
             # Check if auto-reset is disabled
             reset_day = get_config("reset_day", "Never")
             if reset_day.lower() == "never":
                 return  # Skip reset check entirely
 
-            ist = pytz.timezone("Asia/Kolkata")
-            now = datetime.now(ist)
+            local_time = pytz.timezone(TIMEZONE)
+            now = datetime.now(local_time)
             last_reset = funds.last_reset_date
 
             # Make last_reset timezone aware if it isn't
             if last_reset.tzinfo is None:
-                last_reset = ist.localize(last_reset)
+                last_reset = local_time.localize(last_reset)
 
             # Check if it's the configured reset day and we haven't reset today
             reset_time_str = get_config("reset_time", "00:00")
@@ -174,9 +197,8 @@ class FundManager:
                 funds.today_realized_pnl = Decimal("0.00")
                 funds.unrealized_pnl = Decimal("0.00")
                 funds.total_pnl = Decimal("0.00")
-                funds.last_reset_date = datetime.now(pytz.timezone("Asia/Kolkata"))
+                funds.last_reset_date = datetime.now(pytz.timezone(TIMEZONE))
                 funds.reset_count += 1
-
                 db_session.commit()
 
                 # Clear all positions and holdings
@@ -224,7 +246,7 @@ class FundManager:
                 shortage = required_margin - funds.available_balance
                 return (
                     False,
-                    f"Insufficient funds. Required: ₹{required_margin}, Available: ₹{funds.available_balance}, Shortage: ₹{shortage}",
+                    f"Insufficient funds. Required: {CURRENCY_SYMBOL}{required_margin}, Available: {CURRENCY_SYMBOL}{funds.available_balance}, Shortage: {CURRENCY_SYMBOL}{shortage}",
                 )
 
         except Exception as e:
@@ -287,10 +309,10 @@ class FundManager:
 
             if result.rowcount != 1:
                 if delta > 0:
-                    return False, f"Insufficient funds. Required: ₹{delta}"
+                    return False, f"Insufficient funds. Required: {CURRENCY_SYMBOL}{delta}"
                 return (
                     False,
-                    f"Cannot release ₹{-delta}: more than the reserved margin",
+                    f"Cannot release {CURRENCY_SYMBOL}{-delta}: more than the reserved margin",
                 )
 
             # The in-memory copy is now stale; drop it so later reads see the
@@ -299,9 +321,9 @@ class FundManager:
 
             # Deliberately no commit: the caller owns the transaction.
             logger.info(
-                f"Staged ₹{delta} margin change for user {self.user_id}. {description}"
+                f"Staged {CURRENCY_SYMBOL}{delta} margin change for user {self.user_id}. {description}"
             )
-            return True, f"Margin change staged: ₹{delta}"
+            return True, f"Margin change staged: {CURRENCY_SYMBOL}{delta}"
         except Exception as e:
             logger.exception(f"Error staging margin for user {self.user_id}: {e}")
             return False, f"Error staging margin: {str(e)}"
@@ -327,7 +349,7 @@ class FundManager:
                 if funds.available_balance < amount:
                     return (
                         False,
-                        f"Insufficient funds. Required: ₹{amount}, Available: ₹{funds.available_balance}",
+                        f"Insufficient funds. Required: {CURRENCY_SYMBOL}{amount}, Available: {CURRENCY_SYMBOL}{funds.available_balance}",
                     )
 
                 # Block the margin
@@ -336,8 +358,8 @@ class FundManager:
 
                 db_session.commit()
 
-                logger.info(f"Blocked ₹{amount} margin for user {self.user_id}. {description}")
-                return True, f"Margin blocked: ₹{amount}"
+                logger.info(f"Blocked {CURRENCY_SYMBOL}{amount} margin for user {self.user_id}. {description}")
+                return True, f"Margin blocked: {CURRENCY_SYMBOL}{amount}"
 
             except Exception as e:
                 db_session.rollback()
@@ -371,12 +393,12 @@ class FundManager:
                 # reconcile_margin(auto_fix=True) already exists to correct.
                 if amount > funds.used_margin:
                     logger.error(
-                        f"Refusing to release ₹{amount} for user {self.user_id}: only "
-                        f"₹{funds.used_margin} is reserved. {description}"
+                        f"Refusing to release {CURRENCY_SYMBOL}{amount} for user {self.user_id}: only "
+                        f"{CURRENCY_SYMBOL}{funds.used_margin} is reserved. {description}"
                     )
                     return (
                         False,
-                        f"Cannot release ₹{amount}: only ₹{funds.used_margin} is reserved",
+                        f"Cannot release {CURRENCY_SYMBOL}{amount}: only {CURRENCY_SYMBOL}{funds.used_margin} is reserved",
                     )
 
                 # Release the margin
@@ -395,9 +417,9 @@ class FundManager:
                 db_session.commit()
 
                 logger.info(
-                    f"Released ₹{amount} margin for user {self.user_id}. Realized P&L: ₹{realized_pnl}. {description}"
+                    f"Released {CURRENCY_SYMBOL}{amount} margin for user {self.user_id}. Realized P&L: {CURRENCY_SYMBOL}{realized_pnl}. {description}"
                 )
-                return True, f"Margin released: ₹{amount}, P&L: ₹{realized_pnl}"
+                return True, f"Margin released: {CURRENCY_SYMBOL}{amount}, P&L: {CURRENCY_SYMBOL}{realized_pnl}"
 
             except Exception as e:
                 db_session.rollback()
@@ -428,13 +450,13 @@ class FundManager:
                 # without even the visible cash bump a bad release leaves.
                 if amount > funds.used_margin:
                     logger.error(
-                        f"Refusing to transfer ₹{amount} to holdings for user "
-                        f"{self.user_id}: only ₹{funds.used_margin} is reserved. "
+                        f"Refusing to transfer {CURRENCY_SYMBOL}{amount} to holdings for user "
+                        f"{self.user_id}: only {CURRENCY_SYMBOL}{funds.used_margin} is reserved. "
                         f"{description}"
                     )
                     return (
                         False,
-                        f"Cannot transfer ₹{amount}: only ₹{funds.used_margin} is reserved",
+                        f"Cannot transfer {CURRENCY_SYMBOL}{amount}: only {CURRENCY_SYMBOL}{funds.used_margin} is reserved",
                     )
 
                 # Reduce used margin (release from used_margin)
@@ -444,9 +466,9 @@ class FundManager:
                 db_session.commit()
 
                 logger.debug(
-                    f"Transferred ₹{amount} margin to holdings for user {self.user_id}. {description}"
+                    f"Transferred {CURRENCY_SYMBOL}{amount} margin to holdings for user {self.user_id}. {description}"
                 )
-                return True, f"Margin transferred to holdings: ₹{amount}"
+                return True, f"Margin transferred to holdings: {CURRENCY_SYMBOL}{amount}"
 
             except Exception as e:
                 db_session.rollback()
@@ -478,9 +500,9 @@ class FundManager:
                 db_session.commit()
 
                 logger.info(
-                    f"Credited ₹{amount} sale proceeds for user {self.user_id}. {description}"
+                    f"Credited {CURRENCY_SYMBOL}{amount} sale proceeds for user {self.user_id}. {description}"
                 )
-                return True, f"Sale proceeds credited: ₹{amount}"
+                return True, f"Sale proceeds credited: {CURRENCY_SYMBOL}{amount}"
 
             except Exception as e:
                 db_session.rollback()
@@ -536,7 +558,7 @@ class FundManager:
             margin = trade_value / Decimal(str(leverage))
 
             logger.debug(
-                f"Margin for {symbol} {exchange} {product} {action}: ₹{margin} (Trade value: ₹{trade_value}, Leverage: {leverage}x)"
+                f"Margin for {symbol} {exchange} {product} {action}: {CURRENCY_SYMBOL}{margin} (Trade value: {CURRENCY_SYMBOL}{trade_value}, Leverage: {leverage}x)"
             )
 
             return margin, "Margin calculated successfully"

@@ -103,15 +103,28 @@ def _constraint_allows_trigger_pending(conn) -> bool:
 
 
 def widen_order_status_constraint(conn):
-    """Rebuild sandbox_orders with 'trigger pending' added to the CHECK constraint.
+    """Rebuild or alter sandbox_orders with 'trigger pending' added to the CHECK constraint.
 
     Idempotent: if the constraint already allows 'trigger pending' (e.g. a
     fresh install created via database/sandbox_db.py's up-to-date model, or
     this migration already ran), this is a no-op.
     """
-    result = conn.execute(
-        text("SELECT name FROM sqlite_master WHERE type='table' AND name='sandbox_orders'")
-    )
+    dialect = conn.engine.name
+
+    # 1. Database-agnostic table existence check
+    if dialect == "sqlite":
+        result = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='sandbox_orders'")
+        )
+    else:  # postgresql
+        result = conn.execute(
+            text("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' AND table_name = 'sandbox_orders'
+            """)
+        )
+
     if not result.fetchone():
         logger.info("sandbox_orders table does not exist yet, nothing to migrate")
         return
@@ -120,12 +133,43 @@ def widen_order_status_constraint(conn):
         logger.info("order_status CHECK constraint already allows 'trigger pending', skipping")
         return
 
-    logger.info("Rebuilding sandbox_orders to widen the order_status CHECK constraint...")
+    logger.info("Widening the order_status CHECK constraint...")
 
+    # =========================================================================
+    # POSTGRESQL OPTIMIZED PATH (In-place alteration)
+    # =========================================================================
+    if dialect == "postgresql":
+        # In PostgreSQL, check constraints have system names. We drop the old constraint
+        # if known, or we validate/add an explicit one. 
+        # Note: If the constraint was created via SQLAlchemy without a custom name,
+        # it usually gets an auto-generated structural name like 'sandbox_orders_order_status_check'.
+        try:
+            # Safely drop the existing constraint if it matches standard naming conventions
+            conn.execute(text("ALTER TABLE sandbox_orders DROP CONSTRAINT IF EXISTS sandbox_orders_order_status_check"))
+            
+            # Apply the new wide validation check directly in place
+            conn.execute(
+                text(f"""
+                ALTER TABLE sandbox_orders 
+                ADD CONSTRAINT sandbox_orders_order_status_check 
+                CHECK (order_status IN ({NEW_ORDER_STATUS_VALUES}))
+            """)
+            )
+            conn.commit()
+            logger.info("sandbox_orders modified successfully via in-place ALTER TABLE")
+            return
+        except Exception as e:
+            logger.error(f"In-place PostgreSQL modification failed: {e}. Falling back to table rebuild...")
+            conn.rollback()
+
+    # =========================================================================
+    # SQLITE COMPATIBLE PATH (Table Rebuild Strategy)
+    # =========================================================================
     conn.execute(text("PRAGMA foreign_keys=OFF"))
 
     conn.execute(text("ALTER TABLE sandbox_orders RENAME TO sandbox_orders_old"))
 
+    # Autoincrement handling is kept explicit here for SQLite execution fallback
     conn.execute(
         text(f"""
         CREATE TABLE sandbox_orders (

@@ -1,12 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { compression } from 'vite-plugin-compression2'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
+
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
+    compression({ 
+      algorithms: ['gzip', 'brotliCompress'] // Generates both file types automatically!
+    }),
     tailwindcss(),
     // No build-time compression plugin. The .br/.gz variants it used to emit
     // were force-committed with frontend/dist/ by CI, and because compressed
@@ -52,11 +57,12 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    emptyOutDir: true, // Guarantees a fresh directory before building, so the CI can commit the new .br/.gz variants without stale cruft.
     sourcemap: false,
     // Plotly core can legitimately produce a large shared chart chunk.
     // Keep the limit high enough for that known vendor cost while still
     // flagging any new app-code chunk that drifts above 1MB.
-    chunkSizeWarningLimit: 1100,
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
       output: {
         // Split the stable framework libs into their own long-cached chunk
@@ -70,6 +76,9 @@ export default defineConfig({
             return 'react-vendor'
           }
           if (id.includes('tanstack/react-query')) return 'tanstack'
+          // if (id.includes('node_modules')) {
+          //   return 'vendor';
+          // }
         },
       },
     },

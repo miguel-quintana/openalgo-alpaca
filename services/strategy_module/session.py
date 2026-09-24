@@ -16,13 +16,14 @@ import os
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 
+import os
 import pytz
 
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 def session_reset_time() -> dt_time:

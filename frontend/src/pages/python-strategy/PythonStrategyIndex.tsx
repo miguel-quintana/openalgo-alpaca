@@ -43,6 +43,8 @@ import { SCHEDULE_DAYS, STATUS_COLORS, STATUS_LABELS } from '@/types/python-stra
 import { showToast } from '@/utils/toast'
 
 export default function PythonStrategyIndex() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata';
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN';
   const navigate = useNavigate()
   const [strategies, setStrategies] = useState<PythonStrategy[]>([])
   const [masterStatus, setMasterStatus] = useState<MasterContractStatus | null>(null)
@@ -223,7 +225,7 @@ export default function PythonStrategyIndex() {
 
   const formatTime = (timeStr: string | null) => {
     if (!timeStr) return '-'
-    return new Date(timeStr).toLocaleString('en-IN', {
+    return new Date(timeStr).toLocaleString(LOCALE, {
       day: '2-digit',
       month: 'short',
       hour: '2-digit',
@@ -345,9 +347,12 @@ export default function PythonStrategyIndex() {
       {/* Current Time */}
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Clock className="h-4 w-4" />
-        Current IST: {currentTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
+        Current Time: {currentTime.toLocaleString(LOCALE, { 
+          timeZone: TIMEZONE, 
+          timeZoneName: 'short' 
+        })}
       </div>
-
+      
       {/* Strategies Grid */}
       {strategies.length === 0 ? (
         <Card className="py-12">

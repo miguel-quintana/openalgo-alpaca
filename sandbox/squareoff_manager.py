@@ -31,7 +31,7 @@ class SquareOffManager:
     """Manages automatic square-off of MIS positions"""
 
     def __init__(self):
-        self.ist = pytz.timezone("Asia/Kolkata")
+        self.ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
         # Load square-off times from config
         self.square_off_times = {
@@ -43,6 +43,8 @@ class SquareOffManager:
             "BCD": self._parse_time(get_config("cds_bcd_square_off_time", "16:45")),
             "MCX": self._parse_time(get_config("mcx_square_off_time", "23:30")),
             "NCDEX": self._parse_time(get_config("ncdex_square_off_time", "17:00")),
+            "US": self._parse_time(get_config("us_square_off_time", "15:45")),
+            "OPRA": self._parse_time(get_config("opra_square_off_time", "15:45")),
         }
 
     def _parse_time(self, time_str):
@@ -379,11 +381,13 @@ if __name__ == "__main__":
 
     som = SquareOffManager()
 
-    # Display square-off times
+    # Display square-off times dynamically using configured timezone
     status = som.get_square_off_status()
-    logger.info("Configured square-off times:")
+    tz_name = os.getenv("TIMEZONE", "Asia/Kolkata")
+    
+    logger.info(f"Configured square-off times ({tz_name}):")
     for exchange, info in status.items():
-        logger.info(f"  {exchange}: {info['square_off_time']} IST")
+        logger.info(f"  {exchange}: {info['square_off_time']}")
 
     # Run check every minute
     check_interval = 60  # 1 minute

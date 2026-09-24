@@ -27,6 +27,9 @@ import type { PythonStrategy, PythonStrategyContent } from '@/types/python-strat
 import { showToast } from '@/utils/toast'
 
 export default function EditPythonStrategy() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata';
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN';
+  
   const { strategyId } = useParams<{ strategyId: string }>()
   const navigate = useNavigate()
   const [strategy, setStrategy] = useState<PythonStrategy | null>(null)
@@ -293,10 +296,9 @@ export default function EditPythonStrategy() {
         {content.last_modified && (
           <>
             <span>•</span>
-            <span>Last modified: {new Date(content.last_modified).toLocaleString()}</span>
+            <span>Last modified: {new Date(content.last_modified).toLocaleString(LOCALE, { timeZone: TIMEZONE })}</span>
           </>
-        )}
-      </div>
+        )}      </div>
 
       {/* Editor */}
       <Card>

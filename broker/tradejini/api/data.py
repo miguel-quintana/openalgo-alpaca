@@ -1,3 +1,4 @@
+import os
 import json
 import threading
 import time
@@ -827,9 +828,9 @@ class BrokerData:
             def parse_timestamp(ts, is_start=True):
                 try:
                     if isinstance(ts, str):
-                        dt = pd.Timestamp(ts, tz="Asia/Kolkata")
+                        dt = pd.Timestamp(ts, tz=os.getenv("TIMEZONE", "Asia/Kolkata"))
                     else:
-                        dt = pd.Timestamp(ts, unit="ms", tz="Asia/Kolkata")
+                        dt = pd.Timestamp(ts, unit="ms", tz=os.getenv("TIMEZONE", "Asia/Kolkata"))
 
                     if is_start:
                         dt = dt.replace(hour=9, minute=15, second=0, microsecond=0)
@@ -904,7 +905,7 @@ class BrokerData:
                 )
             else:
                 # If no timestamp, generate based on interval
-                start_dt = pd.Timestamp(start_ts, unit="s", tz="Asia/Kolkata")
+                start_dt = pd.Timestamp(start_ts, unit="s", tz=os.getenv("TIMEZONE", "Asia/Kolkata"))
                 freq = interval.replace("m", "min").replace("h", "h").replace("d", "D")
                 df["datetime"] = pd.date_range(start=start_dt, periods=len(df), freq=freq)
 

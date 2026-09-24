@@ -70,13 +70,16 @@ interface CacheHealth {
   }
 }
 
+const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
 function formatDateTime(isoString: string | null): string {
   if (!isoString) return 'Never'
   const date = new Date(isoString)
-  return date.toLocaleString('en-IN', {
+  return date.toLocaleString(LOCALE, {
     dateStyle: 'medium',
     timeStyle: 'short',
-    timeZone: 'Asia/Kolkata',
+    timeZone: TIMEZONE,
   })
 }
 
@@ -403,7 +406,7 @@ export default function MasterContract() {
                 Downloads after{' '}
                 <span className="font-medium">
                   {status?.smart_download?.cutoff_time || '08:00'}{' '}
-                  {status?.smart_download?.cutoff_timezone || 'IST'}
+                  {status?.smart_download?.cutoff_timezone || 'Local'}
                 </span>{' '}
                 are cached for the day. Login after cutoff reuses cached data.
               </p>

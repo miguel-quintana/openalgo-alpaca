@@ -42,7 +42,7 @@ import {
 import type { FreezeQty } from '@/types/admin'
 import { showToast } from '@/utils/toast'
 
-const EXCHANGES = ['NFO', 'BFO', 'CDS', 'MCX']
+const EXCHANGES = ['NFO', 'BFO', 'CDS', 'MCX', 'US', 'OPRA']
 
 export default function FreezeQtyPage() {
   const [freezeData, setFreezeData] = useState<FreezeQty[]>([])

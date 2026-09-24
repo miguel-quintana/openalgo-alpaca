@@ -19,7 +19,7 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 # IST timezone
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 def catch_up_mis_squareoff():

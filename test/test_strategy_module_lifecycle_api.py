@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import os
 import pytz
 from flask import Flask
 
@@ -62,7 +63,7 @@ def client(monkeypatch):
     with test_client.session_transaction() as flask_session:
         flask_session["logged_in"] = True
         flask_session["user"] = USER
-        flask_session["login_time"] = datetime.now(pytz.timezone("Asia/Kolkata")).isoformat()
+        flask_session["login_time"] = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))).isoformat()
     return test_client
 
 

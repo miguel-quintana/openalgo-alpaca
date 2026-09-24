@@ -60,6 +60,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
+import os
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -82,7 +83,7 @@ logger = get_logger(__name__)
 
 #: The platform states every timestamp in IST, and a broker's market timestamps
 #: are IST, so the conversion is fixed rather than taken from the server locale.
-IST = ZoneInfo("Asia/Kolkata")
+IST = ZoneInfo(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 #: Quote-only exchanges an index is listed on, in the order they are tried when
 #: the pair the model asked for does not resolve.
@@ -1253,7 +1254,7 @@ class MarketToolkit(OpenAlgoToolkit):
                 "start_date": start,
                 "end_date": end,
                 "source": source,
-                "timezone": "Asia/Kolkata",
+                "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
                 "rows_total": total,
                 "rows_returned": len(tail),
                 "rows_omitted": total - len(tail),

@@ -257,11 +257,30 @@ def add_missing_columns(conn):
 
     logger.info("Checking for missing columns...")
 
-    # Check and add margin_blocked to sandbox_orders if missing
-    result = conn.execute(text("PRAGMA table_info(sandbox_orders)"))
-    columns = [row[1] for row in result]
+    dialect = conn.engine.name
+    if dialect not in ("sqlite", "postgresql"):
+        logger.warning(f"Unsupported database engine for migration: {dialect}")
+        return
 
-    if "margin_blocked" not in columns:
+    # Helper function to dynamically fetch column names for a given table
+    def get_columns(table_name):
+        if dialect == "sqlite":
+            result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+            return [row for row in result]
+        else:  # postgresql
+            result = conn.execute(
+                text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = :table
+                """),
+                {"table": table_name}
+            )
+            return [row for row in result]
+
+    # Check and add margin_blocked to sandbox_orders if missing
+    orders_columns = get_columns("sandbox_orders")
+    if "margin_blocked" not in orders_columns:
         conn.execute(
             text("""
             ALTER TABLE sandbox_orders
@@ -270,11 +289,10 @@ def add_missing_columns(conn):
         )
         logger.info("Added margin_blocked column to sandbox_orders")
 
-    # Check and add accumulated_realized_pnl to sandbox_positions if missing
-    result = conn.execute(text("PRAGMA table_info(sandbox_positions)"))
-    columns = [row[1] for row in result]
+    # Check and add columns to sandbox_positions if missing
+    positions_columns = get_columns("sandbox_positions")
 
-    if "accumulated_realized_pnl" not in columns:
+    if "accumulated_realized_pnl" not in positions_columns:
         conn.execute(
             text("""
             ALTER TABLE sandbox_positions
@@ -283,8 +301,7 @@ def add_missing_columns(conn):
         )
         logger.info("Added accumulated_realized_pnl column to sandbox_positions")
 
-    # Check and add margin_blocked to sandbox_positions if missing
-    if "margin_blocked" not in columns:
+    if "margin_blocked" not in positions_columns:
         conn.execute(
             text("""
             ALTER TABLE sandbox_positions
@@ -418,15 +435,23 @@ def status():
         ]
 
         with engine.connect() as conn:
-            # Check all required tables
+            dialect = engine.name
+            if dialect not in ("sqlite", "postgresql"):
+                logger.error(f"Unsupported database engine for status check: {dialect}")
+                return False
+
+            # 1. Check all required tables dynamically based on the dialect
             missing_tables = []
             for table in required_tables:
-                result = conn.execute(
-                    text(f"""
-                    SELECT name FROM sqlite_master
-                    WHERE type='table' AND name='{table}'
-                """)
-                )
+                if dialect == "sqlite":
+                    query = text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table")
+                else:  # postgresql
+                    query = text("""
+                        SELECT table_name FROM information_schema.tables 
+                        WHERE table_schema = 'public' AND table_name = :table
+                    """)
+                
+                result = conn.execute(query, {"table": table})
                 if not result.fetchone():
                     missing_tables.append(table)
 
@@ -435,30 +460,41 @@ def status():
                 logger.info("   Migration needed")
                 return False
 
-            # Check critical columns
-            result = conn.execute(text("PRAGMA table_info(sandbox_orders)"))
-            columns = [row[1] for row in result]
+            # Helper closure to clean up column checking logic
+            def get_columns(table_name):
+                if dialect == "sqlite":
+                    res = conn.execute(text(f"PRAGMA table_info({table_name})"))
+                    return [row for row in res]
+                else:  # postgresql
+                    res = conn.execute(
+                        text("""
+                            SELECT column_name FROM information_schema.columns 
+                            WHERE table_name = :table
+                        """),
+                        {"table": table_name}
+                    )
+                    return [row for row in res]
 
-            if "margin_blocked" not in columns:
+            # 2. Check critical columns in sandbox_orders
+            orders_columns = get_columns("sandbox_orders")
+            if "margin_blocked" not in orders_columns:
                 logger.info("Missing margin_blocked column in sandbox_orders")
                 logger.info("   Migration needed")
                 return False
 
-            # Check for accumulated_realized_pnl and margin_blocked in sandbox_positions
-            result = conn.execute(text("PRAGMA table_info(sandbox_positions)"))
-            columns = [row[1] for row in result]
-
-            if "accumulated_realized_pnl" not in columns:
+            # 3. Check for accumulated_realized_pnl and margin_blocked in sandbox_positions
+            positions_columns = get_columns("sandbox_positions")
+            if "accumulated_realized_pnl" not in positions_columns:
                 logger.info("Missing accumulated_realized_pnl column in sandbox_positions")
                 logger.info("   Migration needed")
                 return False
 
-            if "margin_blocked" not in columns:
+            if "margin_blocked" not in positions_columns:
                 logger.info("Missing margin_blocked column in sandbox_positions")
                 logger.info("   Migration needed")
                 return False
 
-            # Show statistics
+            # 4. Show statistics (ANSI SQL standard - compatible with both backends)
             result = conn.execute(
                 text("""
                 SELECT

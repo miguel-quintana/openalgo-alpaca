@@ -688,7 +688,7 @@ export default function PythonStrategyGuide() {
                       <span className="text-xs">Ambedkar Jayanti</span>
                     </td>
                     <td className="py-2 pr-3">NSE / BSE / NFO</td>
-                    <td className="py-2">Closed all day. Strategies paused at 00:01 IST</td>
+                    <td className="py-2">Closed all day. Strategies paused at 00:01 Local Time</td>
                   </tr>
                   <tr className="border-b">
                     <td className="py-2 pr-3">MCX</td>
@@ -733,7 +733,7 @@ export default function PythonStrategyGuide() {
                 <code>start_time</code> on each day in <code>schedule_days</code>.
               </div>
               <div className="bg-muted p-3 rounded-lg">
-                <strong>2. Daily check (00:01 IST)</strong> &mdash; For each scheduled strategy,
+                <strong>2. Daily check (00:01 Local Time)</strong> &mdash; For each scheduled strategy,
                 looks up <code>get_market_status(config["exchange"])</code>. If the exchange has no
                 session today, the strategy is stopped and marked{' '}
                 <code>paused_reason=holiday|weekend</code>.
@@ -832,7 +832,7 @@ export default function PythonStrategyGuide() {
                       etc.)
                     </li>
                     <li>
-                      <strong>Start Time:</strong> When the strategy auto-starts (IST, 24-hour
+                      <strong>Start Time:</strong> When the strategy auto-starts (Local Time, 24-hour
                       format)
                     </li>
                     <li>

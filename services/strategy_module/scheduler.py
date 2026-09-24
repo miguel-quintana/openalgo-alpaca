@@ -52,6 +52,7 @@ import threading
 from datetime import time as dt_time
 from typing import Any
 
+import os
 import pytz
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -66,7 +67,7 @@ logger = get_logger(__name__)
 #: Every trading time in this product is IST. Passed to the scheduler *and* to
 #: each trigger: a trigger built without one inherits the machine's local zone,
 #: not the scheduler's, on some APScheduler paths.
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 #: Applied to every job. See the module docstring on misfire_grace_time.
 JOB_DEFAULTS: dict[str, Any] = {

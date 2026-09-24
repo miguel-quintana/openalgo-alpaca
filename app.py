@@ -886,6 +886,15 @@ def setup_environment(app):
                 logger.error(f"Failed to initialize Historify scheduler: {e}")
 
             try:
+                from services.equity_scheduler import setup_equity_scheduler
+                
+                # Call without arguments since it now creates its own scheduler
+                setup_equity_scheduler() 
+                logger.debug("Equity snapshot scheduler initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize Equity Snapshot scheduler: {e}")
+                
+            try:
                 # Multi-leg options strategies with end-to-end risk management.
                 # Starts its own order-update subscriber, crash recovery, price
                 # feed, checkpoint writer and scheduler, in that order.

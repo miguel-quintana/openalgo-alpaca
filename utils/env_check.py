@@ -824,27 +824,32 @@ def _try_decrypt(fernet, ct, invalid_token_exc) -> bool:
 
 
 def _migrate_fernet_db(env_path: str, pepper: str, new_salt: str) -> None:
-    """Re-encrypt every Fernet-protected column in openalgo.db.
+    """Re-encrypt every Fernet-protected column in openalgo database.
 
     Decrypts each ciphertext with the legacy static-salt key and re-encrypts
     with the per-install ``new_salt`` key. Rows whose ciphertext can't be
     decrypted with the static salt are left untouched — they'll fail decrypt
     under the new key and trigger forced re-login (same outcome as daily
     token expiry).
-
-    Skips silently for non-SQLite ``DATABASE_URL`` and for fresh installs
-    where the DB file doesn't exist yet.
     """
     try:
         import base64
         from cryptography.fernet import Fernet, InvalidToken
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        from sqlalchemy import create_engine, text
     except ImportError:
         return
 
-    db_path = _resolve_sqlite_path(os.getenv("DATABASE_URL", ""), env_path)
-    if not db_path or not os.path.exists(db_path):
+    # 1. Initialize universal SQLAlchemy engine using database connection strings
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url:
+        return
+
+    engine = create_engine(db_url)
+    dialect = engine.name
+
+    if dialect not in ("sqlite", "postgresql"):
         return
 
     def _make_fernet(salt: bytes) -> "Fernet":
@@ -870,47 +875,59 @@ def _migrate_fernet_db(env_path: str, pepper: str, new_salt: str) -> None:
 
     migrated = skipped = 0
     try:
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            for table, pk, col in targets:
-                cur = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                    (table,),
-                )
-                if cur.fetchone() is None:
-                    continue
-                # The encrypted column may not exist yet: on a fresh install
-                # _migrate_fernet_db can run before a later schema migration
-                # adds the column (e.g. flow_workflows.api_key). The table is
-                # present but the column is not — there is nothing to migrate,
-                # so skip it instead of letting the SELECT raise and abort the
-                # whole rotation with a "no such column" warning.
-                existing_cols = {
-                    r[1] for r in conn.execute(f"PRAGMA table_info({table})")
-                }
-                if col not in existing_cols:
-                    continue
-                cur = conn.execute(
-                    f"SELECT {pk} AS pk, {col} AS ct FROM {table} "
-                    f"WHERE {col} IS NOT NULL AND {col} != ''"
-                )
-                for row in cur.fetchall():
-                    ct = row["ct"]
-                    try:
-                        plaintext = old_fernet.decrypt(
-                            ct.encode() if isinstance(ct, str) else ct
-                        ).decode()
-                    except (InvalidToken, AttributeError, ValueError):
-                        skipped += 1
+        # 2. Wrap operations inside a single database connection & transaction block
+        with engine.connect() as conn:
+            with conn.begin():
+                for table, pk, col in targets:
+                    # Dialect-agnostic table lookup
+                    if dialect == "sqlite":
+                        tbl_query = text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table")
+                        result = conn.execute(tbl_query, {"table": table}).fetchone()
+                    else:  # postgresql
+                        tbl_query = text("""
+                            SELECT table_name FROM information_schema.tables 
+                            WHERE table_schema = 'public' AND table_name = :table
+                        """)
+                        result = conn.execute(tbl_query, {"table": table}).fetchone()
+
+                    if result is None:
                         continue
-                    new_ct = new_fernet.encrypt(plaintext.encode()).decode()
-                    conn.execute(
-                        f"UPDATE {table} SET {col}=? WHERE {pk}=?",
-                        (new_ct, row["pk"]),
-                    )
-                    migrated += 1
-            conn.commit()
-    except sqlite3.Error as e:
+
+                    # Dialect-agnostic column verification lookup
+                    if dialect == "sqlite":
+                        existing_cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+                    else:  # postgresql
+                        col_query = text("""
+                            SELECT column_name FROM information_schema.columns 
+                            WHERE table_name = :table
+                        """)
+                        existing_cols = {row[0] for row in conn.execute(col_query, {"table": table})}
+
+                    if col not in existing_cols:
+                        continue
+
+                    # Fetch rows needing migration (using abstract result row attributes)
+                    data_query = text(f"SELECT {pk} AS pk, {col} AS ct FROM {table} WHERE {col} IS NOT NULL AND {col} != ''")
+                    rows = conn.execute(data_query).fetchall()
+
+                    for row in rows:
+                        ct = row.ct  # Uses SQLAlchemy key/attribute mapping
+                        try:
+                            plaintext = old_fernet.decrypt(
+                                ct.encode() if isinstance(ct, str) else ct
+                            ).decode()
+                        except (InvalidToken, AttributeError, ValueError):
+                            skipped += 1
+                            continue
+                        
+                        new_ct = new_fernet.encrypt(plaintext.encode()).decode()
+                        
+                        # Parameterized update execution to protect column bindings
+                        update_query = text(f"UPDATE {table} SET {col} = :new_ct WHERE {pk} = :pk")
+                        conn.execute(update_query, {"new_ct": new_ct, "pk": row.pk})
+                        migrated += 1
+
+    except Exception as e:
         sys.stderr.write(
             "\n\033[93m\033[1m[OpenAlgo Fernet salt]\033[0m "
             f"\033[93mDB error during salt migration: {e}.\n"

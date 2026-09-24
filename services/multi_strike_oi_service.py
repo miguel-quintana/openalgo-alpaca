@@ -12,6 +12,7 @@ all-zero leg series as "not available" in the UI.
 """
 
 import pandas as pd
+import os
 import pytz
 
 from services.history_service import get_history
@@ -59,7 +60,7 @@ def get_multi_strike_oi_data(
         Tuple of (success: bool, response: dict, status_code: int).
     """
     try:
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         try:
             explicit = _resolve_explicit_window(start_date, end_date, ist)
         except ValueError as exc:

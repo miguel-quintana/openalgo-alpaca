@@ -86,7 +86,7 @@ def async_log_order(api_type, request_data, response_data):
         response_json = json.dumps(response_data)
 
         # Get current time in IST
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         now_ist = datetime.now(ist)
 
         order_log = OrderLog(

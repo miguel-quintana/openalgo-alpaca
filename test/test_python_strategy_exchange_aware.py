@@ -24,7 +24,7 @@ os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 import pytz  # noqa: E402
 
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 # ---------------------------------------------------------------------------

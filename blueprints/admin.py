@@ -30,6 +30,11 @@ from limiter import limiter
 from utils.logging import get_logger
 from utils.session import check_session_validity
 
+from database.health_db import health_session as health_db_session
+from database.latency_db import latency_session as latency_db_session
+from database.sandbox_db import db_session as sandbox_db_session
+from database.traffic_db import logs_session as logs_db_session
+
 logger = get_logger(__name__)
 
 # Use existing rate limits from .env (same as API endpoints)
@@ -479,30 +484,42 @@ def api_holiday_delete(id):
 def api_timings_list():
     """Get all market timings"""
     try:
+        from database.market_calendar_db import IST
         timings_data = get_all_market_timings()
 
-        today = date.today()
+        # Generate 'today' using the configured timezone instead of the OS system time
+        today = datetime.now(IST).date()
         today_timings = get_market_timings_for_date(today)
 
         # Convert epoch to readable time for today's timings (for display)
         today_timings_formatted = []
         for t in today_timings:
-            start_dt = datetime.fromtimestamp(t["start_time"] / 1000)
-            end_dt = datetime.fromtimestamp(t["end_time"] / 1000)
+            start_val = t.get("start_time")
+            end_val = t.get("end_time")
+
+            start_str = (
+                datetime.fromtimestamp(start_val / 1000.0, tz=IST).strftime("%H:%M")
+                if isinstance(start_val, (int, float))
+                else str(start_val or "")
+            )
+            end_str = (
+                datetime.fromtimestamp(end_val / 1000.0, tz=IST).strftime("%H:%M")
+                if isinstance(end_val, (int, float))
+                else str(end_val or "")
+            )            
+
             today_timings_formatted.append(
                 {
                     "exchange": t["exchange"],
-                    "start_time": start_dt.strftime("%H:%M"),
-                    "end_time": end_dt.strftime("%H:%M"),
+                    "start_time": start_str,
+                    "end_time": end_str,
                 }
             )
 
         return jsonify(
             {
                 "status": "success",
-                # data: admin config data with HH:MM strings (for admin UI)
                 "data": timings_data,
-                # market_status: epoch-based timings for frontend market status checks
                 "market_status": today_timings,
                 "today_timings": today_timings_formatted,
                 "today": today.strftime("%Y-%m-%d"),
@@ -512,7 +529,7 @@ def api_timings_list():
     except Exception as e:
         logger.exception(f"Error fetching timings: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
-
+    
 
 @admin_bp.route("/api/timings/<exchange>", methods=["PUT"])
 @check_session_validity
@@ -559,6 +576,8 @@ def api_timings_edit(exchange):
 def api_timings_check():
     """Check market timings for a specific date"""
     try:
+        from database.market_calendar_db import IST
+        
         data = request.get_json()
         date_str = data.get("date", "").strip()
 
@@ -568,11 +587,11 @@ def api_timings_check():
         check_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         check_timings = get_market_timings_for_date(check_date)
 
-        # Convert epoch to readable time
+        # Convert epoch to readable time explicitly using configured TIMEZONE (IST)
         result_timings = []
         for t in check_timings:
-            start_dt = datetime.fromtimestamp(t["start_time"] / 1000)
-            end_dt = datetime.fromtimestamp(t["end_time"] / 1000)
+            start_dt = datetime.fromtimestamp(t["start_time"] / 1000, tz=IST)
+            end_dt = datetime.fromtimestamp(t["end_time"] / 1000, tz=IST)
             result_timings.append(
                 {
                     "exchange": t["exchange"],
@@ -585,7 +604,7 @@ def api_timings_check():
     except Exception as e:
         logger.exception(f"Error checking timings: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
-
+    
 
 # ============================================================================
 # Diagnostics: Errors, System Info, Health Probes, Downloadable Report
@@ -1397,37 +1416,213 @@ def _broker_snapshot():
 
 
 def _database_snapshot():
-    """File presence/size/mtime for each known DB. No live queries."""
+    """Inspect database backend (PostgreSQL, SQLite, DuckDB, etc.) and file presence/sizes."""
+    out = []
+    db_url = os.getenv("DATABASE_URL", "")
+    latency_db_url = os.getenv("LATENCY_DATABASE_URL", "")
+    logs_db_url = os.getenv("LOGS_DATABASE_URL", "")
+    health_db_url = os.getenv("HEALTH_DATABASE_URL", "")
+    sandbox_db_url = os.getenv("SANDBOX_DATABASE_URL", "")
+    historify_db_url = os.getenv("HISTORIFY_DATABASE_URL", "")
+
+    managed = {}
+
+    # Inspect PostgreSQL if configured in DATABASE_URL
+    if "postgres" in db_url:
+        try:
+            from sqlalchemy import text
+            from urllib.parse import urlparse
+            parsed = urlparse(db_url)
+            db_name = parsed.path.lstrip('/') or "postgres"
+            host = parsed.hostname or "localhost"
+
+            table_count = calendar_db_session.execute(
+                text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
+            ).scalar()
+
+            out.append({
+                "name": f"PostgreSQL ({db_name} @ {host})",
+                "exists": True,
+                "size_mb": "Managed",  # Displayed as "Managed" without "MB" on frontend
+                "modified": f"{table_count} tables active"
+            })
+            managed[db_url] = True
+        except Exception as e:
+            calendar_db_session.rollback()
+            out.append({
+                "name": "PostgreSQL Primary DB",
+                "exists": False,
+                "size_mb": "Error",
+                "modified": str(e)[:50]
+            })
+
+    # Inspect PostgreSQL if configured in LOGS_DATABASE_URL
+    if "postgres" in logs_db_url:
+        try:
+            from sqlalchemy import text
+            from urllib.parse import urlparse
+            parsed = urlparse(logs_db_url)
+            db_name = parsed.path.lstrip('/') or "postgres"
+            host = parsed.hostname or "localhost"
+
+            table_count = logs_db_session.execute(
+                text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
+            ).scalar()
+
+            out.append({
+                "name": f"PostgreSQL ({db_name} @ {host})",
+                "exists": True,
+                "size_mb": "Managed",  # Displayed as "Managed" without "MB" on frontend
+                "modified": f"{table_count} tables active"
+            })
+            managed[logs_db_url] = True
+        except Exception as e:
+            logs_db_session.rollback()
+            out.append({
+                "name": "PostgreSQL Primary DB",
+                "exists": False,
+                "size_mb": "Error",
+                "modified": str(e)[:50]
+            })
+
+    # Inspect PostgreSQL if configured in LATENCY_DATABASE_URL
+    if "postgres" in latency_db_url:
+        try:
+            from sqlalchemy import text
+            from urllib.parse import urlparse
+            parsed = urlparse(latency_db_url)
+            db_name = parsed.path.lstrip('/') or "postgres"
+            host = parsed.hostname or "localhost"
+
+            table_count = latency_db_session.execute(
+                text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
+            ).scalar()
+
+            out.append({
+                "name": f"PostgreSQL ({db_name} @ {host})",
+                "exists": True,
+                "size_mb": "Managed",  # Displayed as "Managed" without "MB" on frontend
+                "modified": f"{table_count} tables active"
+            })
+            managed[latency_db_url] = True
+        except Exception as e:
+            latency_db_session.rollback()
+            out.append({
+                "name": "PostgreSQL Primary DB",
+                "exists": False,
+                "size_mb": "Error",
+                "modified": str(e)[:50]
+            })
+
+    # Inspect PostgreSQL if configured in HEALTH_DATABASE_URL
+    if "postgres" in health_db_url:
+        try:
+            from sqlalchemy import text
+            from urllib.parse import urlparse
+            parsed = urlparse(health_db_url)
+            db_name = parsed.path.lstrip('/') or "postgres"
+            host = parsed.hostname or "localhost"
+
+            table_count = health_db_session.execute(
+                text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
+            ).scalar()
+
+            out.append({
+                "name": f"PostgreSQL ({db_name} @ {host})",
+                "exists": True,
+                "size_mb": "Managed",  # Displayed as "Managed" without "MB" on frontend
+                "modified": f"{table_count} tables active"
+            })
+            managed[health_db_url] = True
+        except Exception as e:
+            health_db_session.rollback()
+            out.append({
+                "name": "PostgreSQL Primary DB",
+                "exists": False,
+                "size_mb": "Error",
+                "modified": str(e)[:50]
+            })
+
+    # Inspect PostgreSQL if configured in SANDBOX_DATABASE_URL
+    if "postgres" in sandbox_db_url:
+        try:
+            from sqlalchemy import text
+            from urllib.parse import urlparse
+            parsed = urlparse(sandbox_db_url)
+            db_name = parsed.path.lstrip('/') or "postgres"
+            host = parsed.hostname or "localhost"
+
+            table_count = sandbox_db_session.execute(
+                text("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'")
+            ).scalar()
+
+            out.append({
+                "name": f"PostgreSQL ({db_name} @ {host})",
+                "exists": True,
+                "size_mb": "Managed",  # Displayed as "Managed" without "MB" on frontend
+                "modified": f"{table_count} tables active"
+            })
+            managed[health_db_url] = True
+        except Exception as e:
+            sandbox_db_session.rollback()
+            out.append({
+                "name": "PostgreSQL Primary DB",
+                "exists": False,
+                "size_mb": "Error",
+                "modified": str(e)[:50]
+            })
+
+    # Inspect auxiliary or fallback SQLite / DuckDB database files
     db_files = [
-        ("openalgo", "db/openalgo.db"),
+        ("openalgo (sqlite)", "db/openalgo.db"),
         ("logs", "db/logs.db"),
         ("latency", "db/latency.db"),
         ("health", "db/health.db"),
         ("sandbox", "db/sandbox.db"),
         ("historify", "db/historify.duckdb"),
     ]
-    out = []
+
+    index = 0
     for name, rel in db_files:
+        # Skip showing uncreated openalgo.db fallback when PostgreSQL is active
+        if "postgres" in db_url and name == "openalgo (sqlite)" and not Path(rel).exists():
+            index += 1
+            continue
+
+        if "postgres" in logs_db_url and name == "logs" and not Path(rel).exists():
+            index += 1
+            continue
+
+        if "postgres" in latency_db_url and name == "latency" and not Path(rel).exists():
+            index += 1
+            continue
+
+        if "postgres" in health_db_url and name == "health" and not Path(rel).exists():
+            index += 1
+            continue
+
+        if "postgres" in sandbox_db_url and name == "sandbox" and not Path(rel).exists():
+            index += 1
+            continue
+
         p = Path(rel)
         try:
             if p.exists():
                 st = p.stat()
-                out.append(
+                out.insert(index,
                     {
                         "name": name,
                         "exists": True,
                         "size_mb": round(st.st_size / (1024 * 1024), 2),
-                        "modified": datetime.fromtimestamp(st.st_mtime).strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        ),
+                        "modified": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 )
             else:
                 out.append({"name": name, "exists": False, "size_mb": 0, "modified": None})
         except OSError:
             out.append({"name": name, "exists": False, "size_mb": 0, "modified": None})
+        index +=1
     return out
-
 
 def _trading_mode():
     """Return Live / Analyze and a safe label."""
@@ -1441,24 +1636,32 @@ def _trading_mode():
 
 
 def _server_time_info():
-    """Server local time + IST + timezone label."""
+    """Server local time + configured TIMEZONE + timezone label."""
     try:
-        from zoneinfo import ZoneInfo
+        import pytz
 
+        tz_name = os.getenv("TIMEZONE", "Asia/Kolkata")
+        tz = pytz.timezone(tz_name)
         now_local = datetime.now()
-        now_ist = datetime.now(tz=ZoneInfo("Asia/Kolkata"))
+        now_tz = datetime.now(tz)
+        
+        configured_time_str = now_tz.strftime("%Y-%m-%d %H:%M:%S %Z")
         return {
             "server_time": now_local.strftime("%Y-%m-%d %H:%M:%S"),
             "server_tz": str(now_local.astimezone().tzinfo),
-            "ist_time": now_ist.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "configured_tz": tz_name,
+            "configured_time": configured_time_str,
+            "ist_time": configured_time_str,  # Backwards compatibility key
         }
     except Exception:
         return {
             "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "server_tz": None,
+            "configured_tz": os.getenv("TIMEZONE", "America/New_York"),
+            "configured_time": None,
             "ist_time": None,
         }
-
+    
 
 def _build_system_payload():
     """Assemble the full system snapshot. No secrets, no external calls."""
@@ -1511,25 +1714,27 @@ def api_system_info():
 
 
 def _check_db_read():
-    """Open a SQLite connection and run SELECT 1. Returns ms or error."""
-    import sqlite3
+    """Run SELECT 1 on active SQLAlchemy session (PostgreSQL, SQLite, etc.). Returns ms or error."""
     import time
+    from sqlalchemy import text
 
-    db_path = Path("db/openalgo.db")
-    if not db_path.exists():
-        return {"name": "DB read (openalgo.db)", "ok": False, "ms": None, "detail": "Not found"}
+    db_url = os.getenv("DATABASE_URL", "sqlite:///db/openalgo.db")
+    if "postgres" in db_url:
+        db_type = "PostgreSQL"
+    elif "sqlite" in db_url:
+        db_type = "SQLite"
+    else:
+        db_type = "Database"
+
     started = time.perf_counter()
     try:
-        conn = sqlite3.connect(str(db_path), timeout=2.0)
-        try:
-            conn.execute("SELECT 1").fetchone()
-        finally:
-            conn.close()
+        calendar_db_session.execute(text("SELECT 1")).fetchone()
         elapsed = round((time.perf_counter() - started) * 1000, 1)
-        return {"name": "DB read (openalgo.db)", "ok": True, "ms": elapsed, "detail": "OK"}
+        return {"name": f"DB read ({db_type})", "ok": True, "ms": elapsed, "detail": "OK"}
     except Exception as e:
-        return {"name": "DB read (openalgo.db)", "ok": False, "ms": None, "detail": str(e)[:200]}
-
+        calendar_db_session.rollback()
+        return {"name": f"DB read ({db_type})", "ok": False, "ms": None, "detail": str(e)[:200]}
+    
 
 def _check_loopback_http():
     """HEAD the local Flask app — measures internal request latency.
@@ -1613,6 +1818,7 @@ def _check_websocket_proxy():
 # Allowlist of broker hostnames we are willing to probe with a TCP-connect.
 # No HTTP request, no auth, no API call — just a TCP open + immediate close.
 _BROKER_PROBE_HOSTS = {
+    "alpaca": "status.alpaca.markets",
     "zerodha": "api.kite.trade",
     "angel": "apiconnect.angelbroking.com",
     "dhan": "api.dhan.co",
@@ -1821,7 +2027,9 @@ def _render_report(payload, errors_summary, errors_recent, fmt):
     lines.append(f"{h2}Databases")
     for db in dbs:
         if db.get("exists"):
-            lines.append(f"{bullet}{db['name']}: {db['size_mb']} MB (modified {db['modified']})")
+            size_val = db['size_mb']
+            size_str = f"{size_val} MB" if isinstance(size_val, (int, float)) else str(size_val)
+            lines.append(f"{bullet}{db['name']}: {size_str} (info: {db['modified']})")
         else:
             lines.append(f"{bullet}{db['name']}: _missing_")
     lines.append("")
@@ -1829,7 +2037,8 @@ def _render_report(payload, errors_summary, errors_recent, fmt):
     t = payload.get("time") or {}
     lines.append(f"{h2}Time")
     lines.append(_md_kv("Server time", t.get("server_time")))
-    lines.append(_md_kv("IST time", t.get("ist_time")))
+    lines.append(_md_kv("Configured time", t.get("configured_time") or t.get("ist_time")))
+    lines.append(_md_kv("Configured timezone", t.get("configured_tz")))
     lines.append(_md_kv("Server timezone", t.get("server_tz")))
     lines.append("")
 
@@ -1855,7 +2064,6 @@ def _render_report(payload, errors_summary, errors_recent, fmt):
         lines.append("")
 
     body = "\n".join(lines)
-    # Hard-cap report size at 1 MB
     if len(body) > 1_000_000:
         body = body[:1_000_000] + "\n\n...[report truncated]\n"
     return body

@@ -23,6 +23,9 @@ logger = get_logger(__name__)
 # Load environment variables
 load_dotenv()
 
+# Read target timezone string directly from environment (defaults to Asia/Kolkata)
+TIMEZONE_STR = os.getenv("TIMEZONE", "Asia/Kolkata")
+
 # Database path - in /db folder like other OpenAlgo databases
 HISTORIFY_DB_PATH = os.getenv("HISTORIFY_DATABASE_PATH", "db/historify.duckdb")
 
@@ -240,10 +243,6 @@ def init_database():
             )
         """)
 
-        # No secondary indexes on market_data: every query leads with
-        # `symbol`, DuckDB serves range scans from per-row-group zone maps,
-        # and ART index memory stays fully resident as the table grows,
-        # which OOMs large 1m backfills. See #1779.
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_job_items_job_id
             ON job_items (job_id)
@@ -293,7 +292,6 @@ def add_to_watchlist(symbol: str, exchange: str, display_name: str = None) -> tu
     """
     try:
         with get_connection() as conn:
-            # Check if symbol already exists
             existing = conn.execute(
                 """
                 SELECT id FROM watchlist WHERE symbol = ? AND exchange = ?
@@ -304,7 +302,6 @@ def add_to_watchlist(symbol: str, exchange: str, display_name: str = None) -> tu
             if existing:
                 return True, f"{symbol} already in watchlist"
 
-            # DuckDB doesn't auto-generate IDs, so we need to calculate the next ID
             result = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM watchlist").fetchone()
             next_id = result[0] if result else 1
 
@@ -339,17 +336,14 @@ def bulk_add_to_watchlist(symbols: list[dict[str, str]]) -> tuple[int, int, list
 
     try:
         with get_connection() as conn:
-            # Get existing symbols in one query
             existing_result = conn.execute("""
                 SELECT symbol, exchange FROM watchlist
             """).fetchall()
             existing_set = {(row[0], row[1]) for row in existing_result}
 
-            # Get the current max ID
             max_id_result = conn.execute("SELECT COALESCE(MAX(id), 0) FROM watchlist").fetchone()
             next_id = max_id_result[0] + 1
 
-            # Prepare records for bulk insert
             records_to_insert = []
             for item in symbols:
                 symbol = item.get("symbol", "").upper()
@@ -366,16 +360,14 @@ def bulk_add_to_watchlist(symbols: list[dict[str, str]]) -> tuple[int, int, list
                     )
                     continue
 
-                # Skip if already exists
                 if (symbol, exchange) in existing_set:
                     skipped += 1
                     continue
 
                 records_to_insert.append((next_id, symbol, exchange, display_name))
-                existing_set.add((symbol, exchange))  # Prevent duplicates within batch
+                existing_set.add((symbol, exchange))
                 next_id += 1
 
-            # Bulk insert all records at once
             if records_to_insert:
                 conn.executemany(
                     """
@@ -436,7 +428,6 @@ def bulk_remove_from_watchlist(
 
     try:
         with get_connection() as conn:
-            # Get existing symbols in one query
             existing_result = conn.execute("""
                 SELECT symbol, exchange FROM watchlist
             """).fetchall()
@@ -454,7 +445,6 @@ def bulk_remove_from_watchlist(
                     })
                     continue
 
-                # Check if exists
                 if (symbol, exchange) not in existing_set:
                     skipped += 1
                     continue
@@ -518,21 +508,17 @@ def upsert_market_data(df: pd.DataFrame, symbol: str, exchange: str, interval: s
         return 0
 
     try:
-        # Prepare DataFrame
         df = df.copy()
         df["symbol"] = symbol.upper()
         df["exchange"] = exchange.upper()
         df["interval"] = interval
 
-        # Ensure required columns exist
         if "oi" not in df.columns:
             df["oi"] = 0
 
-        # Ensure timestamp is integer (epoch seconds)
         if df["timestamp"].dtype != "int64":
             df["timestamp"] = pd.to_datetime(df["timestamp"]).astype("int64") // 10**9
 
-        # Select only required columns in correct order
         df = df[
             [
                 "symbol",
@@ -549,7 +535,6 @@ def upsert_market_data(df: pd.DataFrame, symbol: str, exchange: str, interval: s
         ]
 
         with get_connection() as conn:
-            # Use INSERT with ON CONFLICT for upsert (DuckDB requires explicit conflict target)
             conn.execute("""
                 INSERT INTO market_data
                 (symbol, exchange, interval, timestamp, open, high, low, close, volume, oi)
@@ -564,7 +549,6 @@ def upsert_market_data(df: pd.DataFrame, symbol: str, exchange: str, interval: s
                     oi = EXCLUDED.oi
             """)
 
-            # Update catalog - check if exists first due to multiple constraints
             existing = conn.execute(
                 """
                 SELECT id FROM data_catalog
@@ -574,7 +558,6 @@ def upsert_market_data(df: pd.DataFrame, symbol: str, exchange: str, interval: s
             ).fetchone()
 
             if existing:
-                # Update existing record
                 conn.execute(
                     """
                     UPDATE data_catalog SET
@@ -603,7 +586,6 @@ def upsert_market_data(df: pd.DataFrame, symbol: str, exchange: str, interval: s
                     ],
                 )
             else:
-                # Insert new record
                 next_id_result = conn.execute(
                     "SELECT COALESCE(MAX(id), 0) + 1 FROM data_catalog"
                 ).fetchone()
@@ -640,13 +622,8 @@ def upsert_market_data(df: pd.DataFrame, symbol: str, exchange: str, interval: s
         raise
 
 
-# Storage intervals - only these are physically stored
 STORAGE_INTERVALS = {"1m", "D"}
-
-# Standard computed intervals - these are aggregated from 1m data on-the-fly
 COMPUTED_INTERVALS = {"5m", "15m", "30m", "1h"}
-
-# Interval to minutes mapping for standard intervals
 INTERVAL_MINUTES = {
     "1m": 1,
     "5m": 5,
@@ -657,26 +634,7 @@ INTERVAL_MINUTES = {
 
 
 def parse_interval(interval: str) -> dict[str, Any] | None:
-    """
-    Parse an interval string into its components.
-
-    Supports formats:
-    - Minutes: '1m', '5m', '25m', '45m', etc. (lowercase m)
-    - Hours: '1h', '2h', '3h', '4h', etc. (lowercase h)
-    - Days: 'D', '1D', '2D', '3D', etc.
-    - Weeks: 'W', '1W', '2W', etc.
-    - Months: 'M', '1M', '2M', '3M', etc. (uppercase M)
-    - Quarters: 'Q', '1Q', '2Q', etc.
-    - Years: 'Y', '1Y', '2Y', etc.
-
-    Args:
-        interval: Interval string (e.g., '25m', '2h', '3D', 'W', 'M', 'Q', 'Y')
-
-    Returns:
-        Dictionary with 'minutes' (for intraday), 'days' (for daily/weekly),
-        or 'months' (for monthly+), 'type', and 'value' (numeric value).
-        Returns None if parsing fails.
-    """
+    """Parse an interval string into its components."""
     import re
 
     if not interval:
@@ -684,21 +642,17 @@ def parse_interval(interval: str) -> dict[str, Any] | None:
 
     interval = interval.strip()
 
-    # Handle single letter shortcuts (case-sensitive)
     if interval == "D":
         return {"type": "daily", "days": 1, "value": 1, "unit": "D"}
     if interval == "W":
         return {"type": "weekly", "days": 7, "value": 1, "unit": "W"}
     if interval == "M":
-        # Uppercase M = Monthly
         return {"type": "monthly", "months": 1, "value": 1, "unit": "M"}
     if interval == "Q":
         return {"type": "quarterly", "months": 3, "value": 1, "unit": "Q"}
     if interval == "Y":
         return {"type": "yearly", "months": 12, "value": 1, "unit": "Y"}
 
-    # Parse format: number + unit (e.g., '25m', '2h', '3D', '2W', '2M', '2Q', '1Y')
-    # Case-sensitive: lowercase m/h for intraday, uppercase for higher timeframes
     match = re.match(r"^(\d+)([mhDWMQY])$", interval)
     if not match:
         return None
@@ -710,44 +664,25 @@ def parse_interval(interval: str) -> dict[str, Any] | None:
         return None
 
     if unit == "m":
-        # Lowercase m = Minutes
         return {"type": "intraday", "minutes": value, "value": value, "unit": "m"}
     elif unit == "h":
-        # Lowercase h = Hours - convert to minutes
         return {"type": "intraday", "minutes": value * 60, "value": value, "unit": "h"}
     elif unit == "D":
-        # Days
         return {"type": "daily", "days": value, "value": value, "unit": "D"}
     elif unit == "W":
-        # Weeks
         return {"type": "weekly", "days": value * 7, "value": value, "unit": "W"}
     elif unit == "M":
-        # Uppercase M = Monthly
         return {"type": "monthly", "months": value, "value": value, "unit": "M"}
     elif unit == "Q":
-        # Quarters - 3 months each
         return {"type": "quarterly", "months": value * 3, "value": value, "unit": "Q"}
     elif unit == "Y":
-        # Years - 12 months each
         return {"type": "yearly", "months": value * 12, "value": value, "unit": "Y"}
 
     return None
 
 
 def is_custom_interval(interval: str) -> bool:
-    """
-    Check if an interval is a custom intraday interval that needs computation from 1m data.
-
-    Custom intraday intervals are any intervals that:
-    1. Are not storage intervals (1m, D)
-    2. Can be computed from 1m data (any minute/hour interval)
-
-    Args:
-        interval: Interval string
-
-    Returns:
-        True if custom intraday interval that can be computed from 1m, False otherwise
-    """
+    """Check if an interval is a custom intraday interval."""
     if interval in STORAGE_INTERVALS:
         return False
 
@@ -755,31 +690,15 @@ def is_custom_interval(interval: str) -> bool:
     if not parsed:
         return False
 
-    # Only intraday custom intervals can be computed from 1m data
     return parsed["type"] == "intraday"
 
 
 def is_daily_aggregated_interval(interval: str) -> bool:
-    """
-    Check if an interval needs aggregation from Daily (D) data.
-
-    Daily-aggregated intervals are:
-    - W (Weekly)
-    - M (Monthly)
-    - Q (Quarterly)
-    - Y (Yearly)
-
-    Args:
-        interval: Interval string
-
-    Returns:
-        True if interval needs daily aggregation, False otherwise
-    """
+    """Check if an interval needs aggregation from Daily (D) data."""
     parsed = parse_interval(interval)
     if not parsed:
         return False
 
-    # Weekly, Monthly, Quarterly, Yearly need aggregation from D data
     return parsed["type"] in ("weekly", "monthly", "quarterly", "yearly")
 
 
@@ -790,27 +709,8 @@ def get_ohlcv(
     start_timestamp: int | None = None,
     end_timestamp: int | None = None,
 ) -> pd.DataFrame:
-    """
-    Retrieve OHLCV data for a symbol.
-    For computed intervals, aggregates from base data on-the-fly.
-
-    Supports:
-    - Storage intervals: 1m, D (retrieved directly)
-    - Intraday computed: 5m, 15m, 30m, 1h, 25m, 2h, etc. (aggregated from 1m)
-    - Daily-based: W, M, Q, Y (aggregated from D)
-
-    Args:
-        symbol: Trading symbol
-        exchange: Exchange code
-        interval: Time interval (e.g., '1m', '25m', '2h', 'D', 'W', 'M', 'Q', 'Y')
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-
-    Returns:
-        DataFrame with columns: timestamp, open, high, low, close, volume, oi
-    """
+    """Retrieve OHLCV data for a symbol."""
     try:
-        # Check if this is a daily-aggregated interval (W, MO, Q, Y)
         if is_daily_aggregated_interval(interval):
             return _get_daily_aggregated_ohlcv(
                 symbol=symbol,
@@ -820,7 +720,6 @@ def get_ohlcv(
                 end_timestamp=end_timestamp,
             )
 
-        # Check if this is an intraday computed interval (standard or custom)
         if interval in COMPUTED_INTERVALS or is_custom_interval(interval):
             return _get_aggregated_ohlcv(
                 symbol=symbol,
@@ -830,7 +729,6 @@ def get_ohlcv(
                 end_timestamp=end_timestamp,
             )
 
-        # Standard query for stored intervals (1m, D)
         query = """
             SELECT timestamp, open, high, low, close, volume, oi
             FROM market_data
@@ -858,10 +756,6 @@ def get_ohlcv(
         return pd.DataFrame()
 
 
-# Market open times in seconds from midnight IST for each exchange
-# Used for aligning aggregation buckets to market open (not midnight)
-# NSE/BSE/NFO/BFO: 9:15 AM = 9*3600 + 15*60 = 33300 seconds
-# MCX/CDS/BCD: 9:00 AM = 9*3600 = 32400 seconds
 EXCHANGE_MARKET_OPEN_SECONDS = {
     "NSE": 33300,  # 09:15
     "BSE": 33300,  # 09:15
@@ -876,29 +770,16 @@ EXCHANGE_MARKET_OPEN_SECONDS = {
 
 
 def _get_market_open_seconds(exchange: str) -> int:
-    """
-    Get market open time in seconds from midnight for an exchange.
-    Tries to fetch from database first (in case admin changed it),
-    falls back to defaults.
-
-    Args:
-        exchange: Exchange code
-
-    Returns:
-        Seconds from midnight when market opens
-    """
+    """Get market open time in seconds from midnight for an exchange."""
     try:
-        # Try to get from market_calendar_db if available
         from database.market_calendar_db import get_market_timing
 
         timing = get_market_timing(exchange.upper())
         if timing and timing.get("start_offset"):
-            # start_offset is in milliseconds, convert to seconds
             return timing["start_offset"] // 1000
     except Exception:
         pass
 
-    # Fallback to defaults
     return EXCHANGE_MARKET_OPEN_SECONDS.get(exchange.upper(), 33300)
 
 
@@ -910,26 +791,10 @@ def _get_aggregated_ohlcv(
     end_timestamp: int | None = None,
 ) -> pd.DataFrame:
     """
-    Aggregate 1m data to higher timeframes using DuckDB SQL.
-    Aligns candle boundaries to exchange market open time.
-
-    Example: For NSE (opens 9:15), hourly candles are 9:15-10:15, 10:15-11:15, etc.
-    For MCX (opens 9:00), hourly candles are 9:00-10:00, 10:00-11:00, etc.
-
-    Supports custom intervals like 25m, 45m, 2h, 3h, etc.
-
-    Args:
-        symbol: Trading symbol
-        exchange: Exchange code (determines candle alignment)
-        target_interval: Target interval (5m, 15m, 30m, 1h, or custom like 25m, 2h)
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-
-    Returns:
-        DataFrame with aggregated OHLCV data
+    Aggregate 1m data to higher timeframes using DuckDB SQL timezone functions.
+    Dynamically adjusts for DST using TIMEZONE_STR.
     """
     try:
-        # Try standard intervals first, then parse custom
         minutes = INTERVAL_MINUTES.get(target_interval)
         if minutes is None:
             parsed = parse_interval(target_interval)
@@ -940,46 +805,17 @@ def _get_aggregated_ohlcv(
                 return pd.DataFrame()
 
         interval_seconds = minutes * 60
-
-        # Get market open time for this exchange (in seconds from midnight)
         market_open_seconds = _get_market_open_seconds(exchange)
 
-        # IST timezone offset from UTC (5 hours 30 minutes = 19800 seconds)
-        # We need this because timestamps are in UTC epoch
-        ist_offset = 19800
-
-        # Candle alignment algorithm:
-        # 1. Convert UTC timestamp to IST by adding ist_offset
-        # 2. Get seconds from midnight: (timestamp + ist_offset) % 86400
-        # 3. Get trading seconds: seconds_from_midnight - market_open_seconds
-        # 4. Calculate bucket: (trading_seconds / interval_seconds) * interval_seconds
-        # 5. Candle start = day_start + market_open_seconds + bucket
-        #
-        # In SQL:
-        # day_start_utc = ((timestamp + ist_offset) / 86400) * 86400 - ist_offset
-        # seconds_from_midnight_ist = (timestamp + ist_offset) % 86400
-        # trading_seconds = seconds_from_midnight_ist - market_open_seconds
-        # bucket_offset = (trading_seconds / interval_seconds) * interval_seconds
-        # candle_timestamp = day_start_utc + market_open_seconds + bucket_offset
-
-        # Use FLOOR() to ensure proper integer division for candle alignment
-        # Without FLOOR(), floating-point division can cause incorrect bucketing
         query = f"""
-            SELECT
-                (FLOOR((timestamp + {ist_offset}) / 86400) * 86400 - {ist_offset}) +
-                {market_open_seconds} +
-                FLOOR((((timestamp + {ist_offset}) % 86400) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
-                as timestamp,
-                FIRST(open ORDER BY timestamp) as open,
-                MAX(high) as high,
-                MIN(low) as low,
-                LAST(close ORDER BY timestamp) as close,
-                SUM(volume) as volume,
-                LAST(oi ORDER BY timestamp) as oi
-            FROM market_data
-            WHERE symbol = ? AND exchange = ? AND interval = '1m'
+            WITH local_data AS (
+                SELECT
+                    *,
+                    timezone(?, to_timestamp(timestamp)) as local_ts
+                FROM market_data
+                WHERE symbol = ? AND exchange = ? AND interval = '1m'
         """
-        params = [symbol.upper(), exchange.upper()]
+        params = [TIMEZONE_STR, symbol.upper(), exchange.upper()]
 
         if start_timestamp:
             query += " AND timestamp >= ?"
@@ -990,11 +826,31 @@ def _get_aggregated_ohlcv(
             params.append(end_timestamp)
 
         query += f"""
-            GROUP BY (FLOOR((timestamp + {ist_offset}) / 86400) * 86400 - {ist_offset}) +
-                     {market_open_seconds} +
-                     FLOOR((((timestamp + {ist_offset}) % 86400) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
+            ),
+            bucketed_data AS (
+                SELECT
+                    *,
+                    date_trunc('day', local_ts) +
+                    INTERVAL (
+                        {market_open_seconds} +
+                        FLOOR((date_diff('second', date_trunc('day', local_ts), local_ts) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
+                    ) SECOND as local_bucket_start
+                FROM local_data
+                WHERE date_diff('second', date_trunc('day', local_ts), local_ts) >= {market_open_seconds}
+            )
+            SELECT
+                epoch(timezone(?, local_bucket_start)) as timestamp,
+                FIRST(open ORDER BY local_ts) as open,
+                MAX(high) as high,
+                MIN(low) as low,
+                LAST(close ORDER BY local_ts) as close,
+                SUM(volume) as volume,
+                LAST(oi ORDER BY local_ts) as oi
+            FROM bucketed_data
+            GROUP BY local_bucket_start
             ORDER BY timestamp ASC
         """
+        params.append(TIMEZONE_STR)
 
         with get_connection() as conn:
             result = conn.execute(query, params).fetchdf()
@@ -1015,22 +871,7 @@ def _get_daily_aggregated_ohlcv(
 ) -> pd.DataFrame:
     """
     Aggregate Daily (D) data to higher timeframes (W, M, Q, Y) using DuckDB SQL.
-
-    Supports:
-    - W (Weekly): Groups by ISO week
-    - M (Monthly): Groups by calendar month
-    - Q (Quarterly): Groups by calendar quarter
-    - Y (Yearly): Groups by calendar year
-
-    Args:
-        symbol: Trading symbol
-        exchange: Exchange code
-        target_interval: Target interval (W, M, Q, Y, or multiples like 2W, 3M)
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-
-    Returns:
-        DataFrame with aggregated OHLCV data
+    Converts timestamps using TIMEZONE_STR and CTEs to avoid Binder exceptions.
     """
     try:
         parsed = parse_interval(target_interval)
@@ -1041,72 +882,43 @@ def _get_daily_aggregated_ohlcv(
         interval_type = parsed["type"]
         interval_value = parsed.get("value", 1)
 
-        # IST timezone offset from UTC (5 hours 30 minutes = 19800 seconds)
-        ist_offset = 19800
-
-        # Build the GROUP BY expression based on interval type
+        # Simplify group expressions using the CTE 'local_ts' alias
         if interval_type == "weekly":
-            # Group by ISO week number, adjusting for multi-week intervals
-            # ISO week starts on Monday
             if interval_value == 1:
-                group_expr = f"DATE_TRUNC('week', to_timestamp(timestamp + {ist_offset}))"
+                group_expr = "DATE_TRUNC('week', local_ts)"
             else:
-                # For multi-week intervals, group weeks together
-                group_expr = f"""
-                    DATE_TRUNC('week', to_timestamp(timestamp + {ist_offset})) -
-                    INTERVAL ((EXTRACT(WEEK FROM to_timestamp(timestamp + {ist_offset})) - 1) % {interval_value}) WEEK
-                """
+                group_expr = f"DATE_TRUNC('week', local_ts) - INTERVAL ((EXTRACT(WEEK FROM local_ts) - 1) % {interval_value}) WEEK"
         elif interval_type == "monthly":
-            # Group by calendar month
             if interval_value == 1:
-                group_expr = f"DATE_TRUNC('month', to_timestamp(timestamp + {ist_offset}))"
+                group_expr = "DATE_TRUNC('month', local_ts)"
             else:
-                # For multi-month intervals, group months together
-                group_expr = f"""
-                    DATE_TRUNC('month', to_timestamp(timestamp + {ist_offset})) -
-                    INTERVAL ((EXTRACT(MONTH FROM to_timestamp(timestamp + {ist_offset})) - 1) % {interval_value}) MONTH
-                """
+                group_expr = f"DATE_TRUNC('month', local_ts) - INTERVAL ((EXTRACT(MONTH FROM local_ts) - 1) % {interval_value}) MONTH"
         elif interval_type == "quarterly":
-            # Group by calendar quarter (3 months)
             months = parsed.get("months", 3)
             if months == 3:
-                group_expr = f"DATE_TRUNC('quarter', to_timestamp(timestamp + {ist_offset}))"
+                group_expr = "DATE_TRUNC('quarter', local_ts)"
             else:
-                # For multi-quarter intervals
-                group_expr = f"""
-                    DATE_TRUNC('quarter', to_timestamp(timestamp + {ist_offset})) -
-                    INTERVAL ((EXTRACT(QUARTER FROM to_timestamp(timestamp + {ist_offset})) - 1) % {interval_value}) QUARTER
-                """
+                group_expr = f"DATE_TRUNC('quarter', local_ts) - INTERVAL ((EXTRACT(QUARTER FROM local_ts) - 1) % {interval_value}) QUARTER"
         elif interval_type == "yearly":
-            # Group by calendar year
             if interval_value == 1:
-                group_expr = f"DATE_TRUNC('year', to_timestamp(timestamp + {ist_offset}))"
+                group_expr = "DATE_TRUNC('year', local_ts)"
             else:
-                # For multi-year intervals
-                group_expr = f"""
-                    DATE_TRUNC('year', to_timestamp(timestamp + {ist_offset})) -
-                    INTERVAL ((EXTRACT(YEAR FROM to_timestamp(timestamp + {ist_offset})) % {interval_value})) YEAR
-                """
+                group_expr = f"DATE_TRUNC('year', local_ts) - INTERVAL ((EXTRACT(YEAR FROM local_ts) % {interval_value})) YEAR"
         else:
             logger.error(f"Unsupported interval type for daily aggregation: {interval_type}")
             return pd.DataFrame()
 
-        # Build the query - aggregate from D (daily) data
-        # Return timestamp as UTC epoch representing the IST date
-        # (frontend will interpret as UTC which visually shows the IST date)
         query = f"""
-            SELECT
-                EPOCH({group_expr}) as timestamp,
-                FIRST(open ORDER BY timestamp) as open,
-                MAX(high) as high,
-                MIN(low) as low,
-                LAST(close ORDER BY timestamp) as close,
-                SUM(volume) as volume,
-                LAST(oi ORDER BY timestamp) as oi
-            FROM market_data
-            WHERE symbol = ? AND exchange = ? AND interval = 'D'
+            WITH local_data AS (
+                SELECT
+                    *,
+                    timezone(?, to_timestamp(timestamp)) as local_ts
+                FROM market_data
+                WHERE symbol = ? AND exchange = ? AND interval = 'D'
         """
-        params = [symbol.upper(), exchange.upper()]
+        
+        # Base parameters for the initial CTE
+        params = [TIMEZONE_STR, symbol.upper(), exchange.upper()]
 
         if start_timestamp:
             query += " AND timestamp >= ?"
@@ -1117,9 +929,28 @@ def _get_daily_aggregated_ohlcv(
             params.append(end_timestamp)
 
         query += f"""
-            GROUP BY {group_expr}
+            ),
+            bucketed_data AS (
+                SELECT
+                    *,
+                    {group_expr} as local_bucket_start
+                FROM local_data
+            )
+            SELECT
+                epoch(timezone(?, local_bucket_start)) as timestamp,
+                FIRST(open ORDER BY timestamp) as open,
+                MAX(high) as high,
+                MIN(low) as low,
+                LAST(close ORDER BY timestamp) as close,
+                SUM(volume) as volume,
+                LAST(oi ORDER BY timestamp) as oi
+            FROM bucketed_data
+            GROUP BY local_bucket_start
             ORDER BY timestamp ASC
         """
+        
+        # One final parameter for the SELECT epoch extraction
+        params.append(TIMEZONE_STR)
 
         with get_connection() as conn:
             result = conn.execute(query, params).fetchdf()
@@ -1130,14 +961,8 @@ def _get_daily_aggregated_ohlcv(
         logger.exception(f"Error aggregating daily OHLCV data to {target_interval}: {e}")
         return pd.DataFrame()
 
-
 def get_data_catalog() -> list[dict[str, Any]]:
-    """
-    Get summary of all available data in the database.
-
-    Returns:
-        List of dictionaries with symbol, exchange, interval, and data range info
-    """
+    """Get summary of all available data in the database."""
     try:
         with get_connection() as conn:
             result = conn.execute("""
@@ -1160,12 +985,7 @@ def get_data_catalog() -> list[dict[str, Any]]:
 
 
 def get_available_symbols() -> list[dict[str, str]]:
-    """
-    Get list of unique symbol-exchange combinations with data.
-
-    Returns:
-        List of dictionaries with symbol and exchange
-    """
+    """Get list of unique symbol-exchange combinations with data."""
     try:
         with get_connection() as conn:
             result = conn.execute("""
@@ -1185,13 +1005,7 @@ def get_available_symbols() -> list[dict[str, str]]:
 
 
 def get_data_range(symbol: str, exchange: str, interval: str) -> dict[str, Any] | None:
-    """
-    Get the date range of available data for a symbol.
-
-    Returns:
-        Dictionary with first_timestamp, last_timestamp, record_count
-        or None if no data exists
-    """
+    """Get the date range of available data for a symbol."""
     try:
         with get_connection() as conn:
             result = conn.execute(
@@ -1217,17 +1031,7 @@ def get_data_range(symbol: str, exchange: str, interval: str) -> dict[str, Any] 
 
 
 def delete_market_data(symbol: str, exchange: str, interval: str | None = None) -> tuple[bool, str]:
-    """
-    Delete market data for a symbol.
-
-    Args:
-        symbol: Trading symbol
-        exchange: Exchange code
-        interval: Time interval (if None, deletes all intervals)
-
-    Returns:
-        Tuple of (success, message)
-    """
+    """Delete market data for a symbol."""
     try:
         with get_connection() as conn:
             if interval:
@@ -1274,15 +1078,7 @@ def delete_market_data(symbol: str, exchange: str, interval: str | None = None) 
 def bulk_delete_market_data(
     symbols: list[dict[str, str]],
 ) -> tuple[int, int, list[dict[str, str]]]:
-    """
-    Delete market data for multiple symbols in a single transaction.
-
-    Args:
-        symbols: List of dicts with 'symbol' and 'exchange' keys
-
-    Returns:
-        Tuple of (deleted_count, skipped_count, failed_list)
-    """
+    """Delete market data for multiple symbols in a single transaction."""
     deleted = 0
     skipped = 0
     failed = []
@@ -1302,7 +1098,6 @@ def bulk_delete_market_data(
                     continue
 
                 try:
-                    # Delete from market_data
                     result = conn.execute(
                         """
                         DELETE FROM market_data
@@ -1312,7 +1107,6 @@ def bulk_delete_market_data(
                     )
                     rows_deleted = result.rowcount if hasattr(result, 'rowcount') else 0
 
-                    # Delete from data_catalog
                     conn.execute(
                         """
                         DELETE FROM data_catalog
@@ -1357,22 +1151,8 @@ def export_to_csv(
     start_timestamp: int | None = None,
     end_timestamp: int | None = None,
 ) -> tuple[bool, str]:
-    """
-    Export market data to CSV file.
-
-    Args:
-        output_path: Path to save the CSV file
-        symbol: Filter by symbol (optional)
-        exchange: Filter by exchange (optional)
-        interval: Filter by interval (optional)
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-
-    Returns:
-        Tuple of (success, message)
-    """
+    """Export market data to CSV file."""
     try:
-        # Build WHERE clause
         conditions = []
         params = []
 
@@ -1397,15 +1177,15 @@ def export_to_csv(
         query = f"""
             SELECT
                 symbol, exchange, interval,
-                strftime(to_timestamp(timestamp), '%Y-%m-%d') as date,
-                strftime(to_timestamp(timestamp), '%H:%M:%S') as time,
+                strftime(timezone(?, to_timestamp(timestamp)), '%Y-%m-%d') as date,
+                strftime(timezone(?, to_timestamp(timestamp)), '%H:%M:%S') as time,
                 open, high, low, close, volume, oi
             FROM market_data
             WHERE {where_clause}
             ORDER BY symbol, exchange, interval, timestamp
         """
+        full_params = [TIMEZONE_STR, TIMEZONE_STR] + params
 
-        # Validate output path - must be within temp directory
         import tempfile
 
         temp_dir = tempfile.gettempdir()
@@ -1414,8 +1194,7 @@ def export_to_csv(
             return False, "Invalid output path: must be within temp directory"
 
         with get_connection() as conn:
-            # Always use parameterized query and pandas to_csv for safety
-            df = conn.execute(query, params).fetchdf()
+            df = conn.execute(query, full_params).fetchdf()
             df.to_csv(output_path, index=False)
 
         logger.info(f"Exported data to {output_path}")
@@ -1433,18 +1212,12 @@ def export_to_dataframe(
     start_timestamp: int | None = None,
     end_timestamp: int | None = None,
 ) -> pd.DataFrame:
-    """
-    Export market data to pandas DataFrame (for backtesting).
-
-    Returns:
-        DataFrame with datetime index and OHLCV columns
-    """
+    """Export market data to pandas DataFrame."""
     df = get_ohlcv(symbol, exchange, interval, start_timestamp, end_timestamp)
 
     if df.empty:
         return df
 
-    # Convert timestamp to datetime and set as index
     df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
     df.set_index("datetime", inplace=True)
     df.drop("timestamp", axis=1, inplace=True)
@@ -1452,18 +1225,8 @@ def export_to_dataframe(
     return df
 
 
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-
 def get_database_stats() -> dict[str, Any]:
-    """
-    Get database statistics.
-
-    Returns:
-        Dictionary with database size, record counts, etc.
-    """
+    """Get database statistics."""
     try:
         db_path = get_db_path()
         db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
@@ -1495,9 +1258,7 @@ def get_database_stats() -> dict[str, Any]:
 
 
 def vacuum_database():
-    """
-    Vacuum the database to reclaim space and optimize performance.
-    """
+    """Vacuum database space."""
     try:
         with get_connection() as conn:
             conn.execute("VACUUM")
@@ -1506,28 +1267,25 @@ def vacuum_database():
         logger.exception(f"Error vacuuming database: {e}")
 
 
-# Supported exchanges (these are static across brokers)
-# Keep aligned with utils/constants.VALID_EXCHANGES — Historify must accept any
-# exchange the platform validates as legal, otherwise /history download/upload
-# rejects symbols that the live /quote and /history-API paths happily serve.
-SUPPORTED_EXCHANGES = [
-    "NSE", "BSE", "NFO", "BFO", "MCX", "CDS", "BCD", "NCO",
-    "NSE_INDEX", "BSE_INDEX", "MCX_INDEX", "GLOBAL_INDEX",
-    "CRYPTO",
-]
+LOCALE = os.getenv("LOCALE", "en-US")
+if LOCALE == "en-IN":
+    SUPPORTED_EXCHANGES = [
+        "NSE", "BSE", "NFO", "BFO", "MCX", "CDS", "BCD", "NCO",
+        "NSE_INDEX", "BSE_INDEX", "MCX_INDEX", "GLOBAL_INDEX",
+        "CRYPTO",
+    ]
+elif LOCALE == "en-US":
+    SUPPORTED_EXCHANGES = [
+        "US", "OPRA", "CRYPTO",
+    ]
+else:
+    SUPPORTED_EXCHANGES = [
+        "CRYPTO",
+    ]
 
 
 def get_supported_intervals(api_key: str) -> list[str]:
-    """
-    Get supported intervals dynamically from the broker.
-    Uses the intervals_service to fetch broker-specific supported timeframes.
-
-    Args:
-        api_key: OpenAlgo API key
-
-    Returns:
-        List of supported interval strings (e.g., ['1m', '5m', '15m', '1h', 'D'])
-    """
+    """Get supported intervals dynamically from the broker."""
     try:
         from services.intervals_service import get_intervals
 
@@ -1535,7 +1293,6 @@ def get_supported_intervals(api_key: str) -> list[str]:
 
         if success and response.get("status") == "success":
             intervals_data = response.get("data", {})
-            # Flatten all interval categories into a single list
             all_intervals = []
             for category in ["seconds", "minutes", "hours", "days", "weeks", "months"]:
                 all_intervals.extend(intervals_data.get(category, []))
@@ -1546,56 +1303,24 @@ def get_supported_intervals(api_key: str) -> list[str]:
         return []
 
 
-# =============================================================================
-# CSV Import Operations
-# =============================================================================
-
-
 def import_from_csv(
     file_path: str, symbol: str, exchange: str, interval: str
 ) -> tuple[bool, str, int]:
-    """
-    Import OHLCV data from a CSV file into the database.
-
-    Expected CSV format (one of these column sets):
-        Option 1: timestamp, open, high, low, close, volume, oi
-        Option 2: date, time, open, high, low, close, volume, oi
-        Option 3: datetime, open, high, low, close, volume
-
-    The CSV must have headers. Column names are case-insensitive.
-
-    Args:
-        file_path: Path to the CSV file
-        symbol: Trading symbol
-        exchange: Exchange code
-        interval: Time interval (e.g., '1m', '5m', 'D')
-
-    Returns:
-        Tuple of (success, message, records_imported)
-    """
+    """Import OHLCV data from a CSV file into the database."""
     try:
-        # Read CSV with flexible parsing
         df = pd.read_csv(file_path)
 
         if df.empty:
             return False, "CSV file is empty", 0
 
-        # Normalize column names to lowercase
         df.columns = df.columns.str.lower().str.strip()
 
-        # Handle different timestamp formats
         if "timestamp" in df.columns:
-            # Check if timestamp is already epoch seconds or milliseconds
             if pd.api.types.is_numeric_dtype(df["timestamp"]):
                 first_val = df["timestamp"].iloc[0]
-                # Epoch milliseconds are > 1e12 (after year 2001 in ms)
-                # Epoch seconds are typically between 1e9 and 2e9 (1970-2033)
                 if first_val > 1e12:
-                    # Milliseconds - convert to seconds
                     df["timestamp"] = df["timestamp"] // 1000
-                # else: Already epoch seconds, no conversion needed
             else:
-                # Parse as datetime string
                 df["timestamp"] = pd.to_datetime(df["timestamp"]).astype("int64") // 10**9
         elif "datetime" in df.columns:
             df["timestamp"] = pd.to_datetime(df["datetime"]).astype("int64") // 10**9
@@ -1608,20 +1333,16 @@ def import_from_csv(
         else:
             return False, "CSV must have 'timestamp', 'datetime', or 'date' column", 0
 
-        # Validate required OHLCV columns
         required_cols = ["open", "high", "low", "close", "volume"]
         missing_cols = [c for c in required_cols if c not in df.columns]
         if missing_cols:
             return False, f"Missing required columns: {', '.join(missing_cols)}", 0
 
-        # Add optional columns if missing
         if "oi" not in df.columns:
             df["oi"] = 0
 
-        # Select and order columns
         df = df[["timestamp", "open", "high", "low", "close", "volume", "oi"]]
 
-        # Convert data types
         df["timestamp"] = df["timestamp"].astype("int64")
         df["open"] = pd.to_numeric(df["open"], errors="coerce")
         df["high"] = pd.to_numeric(df["high"], errors="coerce")
@@ -1630,7 +1351,6 @@ def import_from_csv(
         df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0).astype("int64")
         df["oi"] = pd.to_numeric(df["oi"], errors="coerce").fillna(0).astype("int64")
 
-        # Drop rows with NaN values in OHLC
         initial_count = len(df)
         df = df.dropna(subset=["open", "high", "low", "close"])
         dropped_count = initial_count - len(df)
@@ -1638,7 +1358,6 @@ def import_from_csv(
         if df.empty:
             return False, "No valid data rows after parsing", 0
 
-        # Insert into database
         records = upsert_market_data(df, symbol, exchange, interval)
 
         msg = f"Imported {records} records"
@@ -1659,34 +1378,16 @@ def import_from_csv(
 def import_from_parquet(
     file_path: str, symbol: str, exchange: str, interval: str
 ) -> tuple[bool, str, int]:
-    """
-    Import OHLCV data from a Parquet file into the database.
-
-    Expected Parquet format - columns:
-        timestamp (int64 epoch seconds), open, high, low, close, volume, oi (optional)
-
-    Args:
-        file_path: Path to the Parquet file
-        symbol: Trading symbol
-        exchange: Exchange code
-        interval: Time interval (e.g., '1m', '5m', 'D')
-
-    Returns:
-        Tuple of (success, message, records_imported)
-    """
+    """Import OHLCV data from a Parquet file into the database."""
     try:
-        # Read Parquet file
         df = pd.read_parquet(file_path)
 
         if df.empty:
             return False, "Parquet file is empty", 0
 
-        # Normalize column names to lowercase
         df.columns = df.columns.str.lower().str.strip()
 
-        # Handle timestamp column
         if "timestamp" in df.columns:
-            # Check if timestamp is already epoch seconds or milliseconds
             if pd.api.types.is_numeric_dtype(df["timestamp"]):
                 first_val = df["timestamp"].iloc[0]
                 if first_val > 1e12:
@@ -1704,20 +1405,16 @@ def import_from_parquet(
         else:
             return False, "Parquet must have 'timestamp', 'datetime', or 'date' column", 0
 
-        # Validate required OHLCV columns
         required_cols = ["open", "high", "low", "close", "volume"]
         missing_cols = [c for c in required_cols if c not in df.columns]
         if missing_cols:
             return False, f"Missing required columns: {', '.join(missing_cols)}", 0
 
-        # Add optional columns if missing
         if "oi" not in df.columns:
             df["oi"] = 0
 
-        # Select and order columns
         df = df[["timestamp", "open", "high", "low", "close", "volume", "oi"]]
 
-        # Convert data types
         df["timestamp"] = df["timestamp"].astype("int64")
         df["open"] = pd.to_numeric(df["open"], errors="coerce")
         df["high"] = pd.to_numeric(df["high"], errors="coerce")
@@ -1726,7 +1423,6 @@ def import_from_parquet(
         df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0).astype("int64")
         df["oi"] = pd.to_numeric(df["oi"], errors="coerce").fillna(0).astype("int64")
 
-        # Drop rows with NaN values in OHLC
         initial_count = len(df)
         df = df.dropna(subset=["open", "high", "low", "close"])
         dropped_count = initial_count - len(df)
@@ -1734,7 +1430,6 @@ def import_from_parquet(
         if df.empty:
             return False, "No valid data rows after parsing", 0
 
-        # Insert into database
         records = upsert_market_data(df, symbol, exchange, interval)
 
         msg = f"Imported {records} records"
@@ -1749,11 +1444,6 @@ def import_from_parquet(
         return False, str(e), 0
 
 
-# =============================================================================
-# Download Job Operations
-# =============================================================================
-
-
 def create_download_job(
     job_id: str,
     job_type: str,
@@ -1763,30 +1453,14 @@ def create_download_job(
     end_date: str,
     config: dict[str, Any] = None,
 ) -> tuple[bool, str]:
-    """
-    Create a new download job with symbol items.
-
-    Args:
-        job_id: Unique job identifier
-        job_type: Type of job ('watchlist', 'option_chain', 'futures_chain', 'custom')
-        symbols: List of dicts with 'symbol' and 'exchange' keys
-        interval: Time interval for download
-        start_date: Start date (YYYY-MM-DD)
-        end_date: End date (YYYY-MM-DD)
-        config: Optional configuration dict (JSON serializable)
-
-    Returns:
-        Tuple of (success, message)
-    """
+    """Create a new download job with symbol items."""
     import json
 
     try:
         with get_connection() as conn:
-            # Begin a transaction for atomicity
             conn.execute("BEGIN TRANSACTION")
 
             try:
-                # Create the job record
                 conn.execute(
                     """
                     INSERT INTO download_jobs
@@ -1804,8 +1478,6 @@ def create_download_job(
                     ],
                 )
 
-                # Prepare symbols DataFrame for batch insert
-                # Use atomic ID generation within the same transaction
                 if symbols:
                     symbols_df = pd.DataFrame(
                         [
@@ -1819,8 +1491,6 @@ def create_download_job(
                         ]
                     )
 
-                    # Atomic batch insert with computed IDs using ROW_NUMBER
-                    # This generates IDs atomically without race conditions
                     conn.execute("""
                         INSERT INTO job_items (id, job_id, symbol, exchange, status)
                         SELECT
@@ -1844,10 +1514,8 @@ def create_download_job(
 
 
 def _safe_timestamp(val) -> str | None:
-    """Convert timestamp to ISO string, handling NaT/None values."""
-    if val is None:
-        return None
-    if pd.isna(val):
+    """Convert timestamp to ISO string."""
+    if val is None or pd.isna(val):
         return None
     try:
         if hasattr(val, "isoformat"):
@@ -1898,7 +1566,7 @@ def get_download_job(job_id: str) -> dict[str, Any] | None:
 
 
 def get_all_download_jobs(status: str = None, limit: int = 50) -> list[dict[str, Any]]:
-    """Get all download jobs, optionally filtered by status."""
+    """Get all download jobs."""
     try:
         with get_connection() as conn:
             if status:
@@ -1930,7 +1598,6 @@ def get_all_download_jobs(status: str = None, limit: int = 50) -> list[dict[str,
             if result.empty:
                 return []
 
-            # Handle NaT (Not a Time) values - replace with None for JSON serialization
             for col in ["created_at", "started_at", "completed_at"]:
                 if col in result.columns:
                     result[col] = result[col].apply(
@@ -1945,7 +1612,7 @@ def get_all_download_jobs(status: str = None, limit: int = 50) -> list[dict[str,
 
 
 def get_job_items(job_id: str, status: str = None) -> list[dict[str, Any]]:
-    """Get all items for a job, optionally filtered by status."""
+    """Get all items for a job."""
     try:
         with get_connection() as conn:
             if status:
@@ -1974,7 +1641,6 @@ def get_job_items(job_id: str, status: str = None) -> list[dict[str, Any]]:
             if result.empty:
                 return []
 
-            # Handle NaT (Not a Time) values - replace with None for JSON serialization
             for col in ["started_at", "completed_at"]:
                 if col in result.columns:
                     result[col] = result[col].apply(
@@ -1989,7 +1655,7 @@ def get_job_items(job_id: str, status: str = None) -> list[dict[str, Any]]:
 
 
 def update_job_status(job_id: str, status: str, error_message: str = None) -> bool:
-    """Update the status of a download job."""
+    """Update job status."""
     try:
         with get_connection() as conn:
             if status == "running":
@@ -2031,7 +1697,7 @@ def update_job_status(job_id: str, status: str, error_message: str = None) -> bo
 def update_job_item_status(
     item_id: int, status: str, records_downloaded: int = 0, error_message: str = None
 ) -> bool:
-    """Update the status of a job item."""
+    """Update job item status."""
     try:
         with get_connection() as conn:
             if status == "downloading":
@@ -2090,7 +1756,7 @@ def update_job_progress(job_id: str, completed: int, failed: int) -> bool:
 
 
 def delete_download_job(job_id: str) -> tuple[bool, str]:
-    """Delete a download job and its items."""
+    """Delete a download job."""
     try:
         with get_connection() as conn:
             conn.execute("DELETE FROM job_items WHERE job_id = ?", [job_id])
@@ -2104,28 +1770,14 @@ def delete_download_job(job_id: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-# =============================================================================
-# Symbol Metadata Operations
-# =============================================================================
-
-
 def upsert_symbol_metadata(symbols: list[dict[str, Any]]) -> int:
-    """
-    Insert or update symbol metadata.
-
-    Args:
-        symbols: List of dicts with symbol metadata
-
-    Returns:
-        Number of records upserted
-    """
+    """Insert or update symbol metadata."""
     if not symbols:
         return 0
 
     try:
         with get_connection() as conn:
             for sym in symbols:
-                # Check if exists
                 existing = conn.execute(
                     """
                     SELECT symbol FROM symbol_metadata
@@ -2215,12 +1867,7 @@ def get_symbol_metadata(symbol: str, exchange: str) -> dict[str, Any] | None:
 
 
 def get_catalog_with_metadata() -> list[dict[str, Any]]:
-    """
-    Get data catalog enriched with symbol metadata.
-
-    Returns:
-        List of catalog entries with metadata joined
-    """
+    """Get catalog enriched with metadata."""
     try:
         with get_connection() as conn:
             result = conn.execute("""
@@ -2246,15 +1893,7 @@ def get_catalog_with_metadata() -> list[dict[str, Any]]:
 
 
 def get_catalog_grouped(group_by: str = "underlying") -> dict[str, list[dict[str, Any]]]:
-    """
-    Get data catalog grouped by underlying or exchange.
-
-    Args:
-        group_by: 'underlying' or 'exchange'
-
-    Returns:
-        Dictionary with groups as keys and catalog entries as values
-    """
+    """Get catalog grouped by underlying or exchange."""
     try:
         catalog = get_catalog_with_metadata()
         grouped = {}
@@ -2265,7 +1904,7 @@ def get_catalog_grouped(group_by: str = "underlying") -> dict[str, list[dict[str
                 if key not in grouped:
                     grouped[key] = []
                 grouped[key].append(item)
-        else:  # exchange
+        else:
             for item in catalog:
                 key = item.get("exchange", "Unknown")
                 if key not in grouped:
@@ -2279,11 +1918,6 @@ def get_catalog_grouped(group_by: str = "underlying") -> dict[str, list[dict[str
         return {}
 
 
-# =============================================================================
-# Advanced Export Operations
-# =============================================================================
-
-
 def export_to_parquet(
     output_path: str,
     symbols: list[dict[str, str]] | None = None,
@@ -2292,51 +1926,19 @@ def export_to_parquet(
     end_timestamp: int | None = None,
     compression: str = "zstd",
 ) -> tuple[bool, str, int]:
-    """
-    Export market data to Parquet format with ZSTD compression.
-
-    Mirrors export_to_zip's three-branch interval handling so that computed
-    intervals (5m/15m/30m/1h, custom intraday, W/M/Q/Y) aggregate from stored
-    1m or D data on the fly instead of returning empty:
-
-    - Daily-aggregated (W, M, Q, Y, multi-D): aggregated from D via
-      _get_daily_aggregated_ohlcv()
-    - Intraday computed (5m/15m/30m/1h, plus custom intraday like 25m, 2h):
-      aggregated from 1m using DuckDB time-bucket SQL
-    - Stored intervals (1m, D): direct query against market_data
-
-    All symbols/rows are concatenated into a single Parquet file with columns:
-    symbol, exchange, interval, timestamp, open, high, low, close, volume, oi,
-    datetime.
-
-    Args:
-        output_path: Path to save the Parquet file
-        symbols: List of dicts with 'symbol' and 'exchange' keys (optional - all if None)
-        interval: Interval to export (required for aggregation correctness)
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-        compression: Compression codec ('zstd', 'snappy', 'gzip', 'none')
-
-    Returns:
-        Tuple of (success, message, record_count)
-    """
+    """Export market data to Parquet format using TIMEZONE_STR for time binning."""
     import tempfile
 
     try:
-        # Validate output path - must be within temp directory
         temp_dir = tempfile.gettempdir()
         abs_output = os.path.abspath(output_path)
         if not abs_output.startswith(os.path.abspath(temp_dir)):
             return False, "Invalid output path: must be within temp directory", 0
 
-        # IST timezone offset from UTC (5 hours 30 minutes = 19800 seconds)
-        ist_offset = 19800
-
         skipped_intervals: list[str] = []
         frames: list[pd.DataFrame] = []
 
         with get_connection() as conn:
-            # Resolve symbol list — explicit, or every symbol in the catalog
             if symbols and len(symbols) > 0:
                 symbols_list = [(s["symbol"].upper(), s["exchange"].upper()) for s in symbols]
             else:
@@ -2349,9 +1951,7 @@ def export_to_parquet(
             if not symbols_list:
                 return False, "No symbols found to export", 0
 
-            # Single-interval export. interval=None falls back to "D" (matches export_to_zip default).
             target_interval = interval if interval else "D"
-
             is_daily_agg = is_daily_aggregated_interval(target_interval)
             is_intraday_computed = (
                 target_interval in COMPUTED_INTERVALS or is_custom_interval(target_interval)
@@ -2361,12 +1961,11 @@ def export_to_parquet(
                 df: pd.DataFrame | None = None
 
                 if is_daily_agg:
-                    # Aggregate from stored D rows
                     check_query = """
                         SELECT COUNT(*) FROM market_data
                         WHERE symbol = ? AND exchange = ? AND interval = 'D'
                     """
-                    check_params: list[Any] = [sym, exch]
+                    check_params = [sym, exch]
                     if start_timestamp:
                         check_query += " AND timestamp >= ?"
                         check_params.append(start_timestamp)
@@ -2374,9 +1973,6 @@ def export_to_parquet(
                         check_query += " AND timestamp <= ?"
                         check_params.append(end_timestamp)
                     if conn.execute(check_query, check_params).fetchone()[0] == 0:
-                        logger.warning(
-                            f"No D data for {sym}:{exch}, skipping daily-aggregated interval {target_interval}"
-                        )
                         skipped_intervals.append(f"{sym}:{exch}:{target_interval}")
                         continue
 
@@ -2389,7 +1985,6 @@ def export_to_parquet(
                     )
 
                 elif is_intraday_computed:
-                    # Aggregate from stored 1m rows via DuckDB time-bucket
                     check_query = """
                         SELECT COUNT(*) FROM market_data
                         WHERE symbol = ? AND exchange = ? AND interval = '1m'
@@ -2402,9 +1997,6 @@ def export_to_parquet(
                         check_query += " AND timestamp <= ?"
                         check_params.append(end_timestamp)
                     if conn.execute(check_query, check_params).fetchone()[0] == 0:
-                        logger.warning(
-                            f"No 1m data for {sym}:{exch}, skipping computed interval {target_interval}"
-                        )
                         skipped_intervals.append(f"{sym}:{exch}:{target_interval}")
                         continue
 
@@ -2414,31 +2006,18 @@ def export_to_parquet(
                         if parsed and parsed["type"] == "intraday":
                             minutes = parsed["minutes"]
                         else:
-                            logger.warning(
-                                f"Cannot parse interval {target_interval}, skipping"
-                            )
                             skipped_intervals.append(f"{sym}:{exch}:{target_interval}")
                             continue
                     interval_seconds = minutes * 60
                     market_open_seconds = _get_market_open_seconds(exch)
 
                     query = f"""
-                        SELECT
-                            (FLOOR((timestamp + {ist_offset}) / 86400) * 86400 - {ist_offset}) +
-                            {market_open_seconds} +
-                            FLOOR((((timestamp + {ist_offset}) % 86400) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
-                            as ts,
-                            FIRST(open ORDER BY timestamp) as open,
-                            MAX(high) as high,
-                            MIN(low) as low,
-                            LAST(close ORDER BY timestamp) as close,
-                            SUM(volume) as volume,
-                            LAST(oi ORDER BY timestamp) as oi
-                        FROM market_data
-                        WHERE symbol = ? AND exchange = ? AND interval = '1m'
-                        AND ((timestamp + {ist_offset}) % 86400) >= {market_open_seconds}
+                        WITH local_data AS (
+                            SELECT *, timezone(?, to_timestamp(timestamp)) as local_ts
+                            FROM market_data
+                            WHERE symbol = ? AND exchange = ? AND interval = '1m'
                     """
-                    params: list[Any] = [sym, exch]
+                    params = [TIMEZONE_STR, sym, exch]
                     if start_timestamp:
                         query += " AND timestamp >= ?"
                         params.append(start_timestamp)
@@ -2446,18 +2025,34 @@ def export_to_parquet(
                         query += " AND timestamp <= ?"
                         params.append(end_timestamp)
                     query += f"""
-                        GROUP BY (FLOOR((timestamp + {ist_offset}) / 86400) * 86400 - {ist_offset}) +
-                                 {market_open_seconds} +
-                                 FLOOR((((timestamp + {ist_offset}) % 86400) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
-                        ORDER BY ts ASC
+                        ),
+                        bucketed_data AS (
+                            SELECT *,
+                                date_trunc('day', local_ts) +
+                                INTERVAL (
+                                    {market_open_seconds} +
+                                    FLOOR((date_diff('second', date_trunc('day', local_ts), local_ts) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
+                                ) SECOND as local_bucket_start
+                            FROM local_data
+                            WHERE date_diff('second', date_trunc('day', local_ts), local_ts) >= {market_open_seconds}
+                        )
+                        SELECT
+                            epoch(timezone(?, local_bucket_start)) as timestamp,
+                            FIRST(open ORDER BY local_ts) as open,
+                            MAX(high) as high,
+                            MIN(low) as low,
+                            LAST(close ORDER BY local_ts) as close,
+                            SUM(volume) as volume,
+                            LAST(oi ORDER BY local_ts) as oi
+                        FROM bucketed_data
+                        GROUP BY local_bucket_start
+                        ORDER BY timestamp ASC
                     """
+                    params.append(TIMEZONE_STR)
 
                     df = conn.execute(query, params).fetchdf()
-                    if not df.empty:
-                        df = df.rename(columns={"ts": "timestamp"})
 
                 else:
-                    # Stored interval (1m, D) — direct read
                     query = """
                         SELECT timestamp, open, high, low, close, volume, oi
                         FROM market_data
@@ -2476,9 +2071,6 @@ def export_to_parquet(
                 if df is None or df.empty:
                     continue
 
-                # Decorate with symbol metadata + datetime so the parquet schema matches
-                # the original export contract (symbol, exchange, interval, timestamp,
-                # OHLCV+oi, datetime) regardless of which branch produced the rows.
                 df = df.assign(symbol=sym, exchange=exch, interval=target_interval)
                 df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
                 df = df[
@@ -2491,32 +2083,21 @@ def export_to_parquet(
                 frames.append(df)
 
         if not frames:
-            if skipped_intervals:
-                return (
-                    False,
-                    f"No data exported. Missing source data for computed interval: {len(skipped_intervals)} symbol(s)",
-                    0,
-                )
             return False, "No data matching the criteria", 0
 
         combined = pd.concat(frames, ignore_index=True)
         combined = combined.sort_values(["symbol", "exchange", "interval", "timestamp"])
 
-        # pyarrow's "none" isn't a valid codec — translate the API value
         pq_compression = None if compression == "none" else compression
         combined.to_parquet(abs_output, compression=pq_compression, index=False)
 
         record_count = len(combined)
-        file_size = os.path.getsize(abs_output) / (1024 * 1024)  # MB
+        file_size = os.path.getsize(abs_output) / (1024 * 1024)
         message = f"Exported {record_count} records ({file_size:.2f} MB)"
-        if skipped_intervals:
-            message += f". Note: {len(skipped_intervals)} symbol(s) skipped due to missing source data."
-        logger.info(message)
         return True, message, record_count
 
     except Exception as e:
         logger.exception(f"Error exporting to Parquet: {e}")
-        # Clean up partial file on error
         if "abs_output" in locals() and os.path.exists(abs_output):
             try:
                 os.remove(abs_output)
@@ -2533,24 +2114,10 @@ def export_to_txt(
     end_timestamp: int | None = None,
     delimiter: str = "\t",
 ) -> tuple[bool, str, int]:
-    """
-    Export market data to TXT format (tab or pipe delimited).
-
-    Args:
-        output_path: Path to save the TXT file
-        symbols: List of dicts with 'symbol' and 'exchange' keys (optional)
-        interval: Filter by interval (optional)
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-        delimiter: Column delimiter (default: tab)
-
-    Returns:
-        Tuple of (success, message, record_count)
-    """
+    """Export market data to TXT format."""
     import tempfile
 
     try:
-        # Build WHERE clause
         conditions = []
         params = []
 
@@ -2573,7 +2140,6 @@ def export_to_txt(
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-        # Validate output path
         temp_dir = tempfile.gettempdir()
         abs_output = os.path.abspath(output_path)
         if not abs_output.startswith(os.path.abspath(temp_dir)):
@@ -2582,16 +2148,17 @@ def export_to_txt(
         query = f"""
             SELECT
                 symbol, exchange, interval,
-                strftime(to_timestamp(timestamp), '%Y-%m-%d') as date,
-                strftime(to_timestamp(timestamp), '%H:%M:%S') as time,
+                strftime(timezone(?, to_timestamp(timestamp)), '%Y-%m-%d') as date,
+                strftime(timezone(?, to_timestamp(timestamp)), '%H:%M:%S') as time,
                 open, high, low, close, volume, oi
             FROM market_data
             WHERE {where_clause}
             ORDER BY symbol, exchange, interval, timestamp
         """
+        full_params = [TIMEZONE_STR, TIMEZONE_STR] + params
 
         with get_connection() as conn:
-            df = conn.execute(query, params).fetchdf()
+            df = conn.execute(query, full_params).fetchdf()
 
             if df.empty:
                 return False, "No data matching the criteria", 0
@@ -2610,12 +2177,8 @@ def export_to_txt(
 def _sanitize_filename(name: str) -> str:
     """Remove path traversal and special characters from filename."""
     import re
-
-    # Remove any path separators and null bytes
     name = name.replace("/", "_").replace("\\", "_").replace("\x00", "")
-    # Keep only alphanumeric, dash, underscore, dot
-    name = re.sub(r"[^A-Za-z0-9_\-.]", "_", name)
-    return name
+    return re.sub(r"[^A-Za-z0-9_\-.]", "_", name)
 
 
 def export_to_zip(
@@ -2626,47 +2189,24 @@ def export_to_zip(
     end_timestamp: int | None = None,
     split_by: str = "symbol",
 ) -> tuple[bool, str, int]:
-    """
-    Export market data to ZIP archive containing CSVs.
-
-    Supports multi-timeframe export where intervals are aggregated on-the-fly:
-    - Intraday (from 1m): 5m, 15m, 30m, 1h, 25m, 2h, etc.
-    - Daily-based (from D): W, M, Q, Y
-
-    Args:
-        output_path: Path to save the ZIP file
-        symbols: List of dicts with 'symbol' and 'exchange' keys (optional)
-        intervals: List of intervals to export (e.g., ['1m', '5m', 'D', 'W', 'M', 'Q', 'Y'])
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-        split_by: 'symbol' to create one CSV per symbol/interval, 'none' for combined
-
-    Returns:
-        Tuple of (success, message, record_count)
-    """
+    """Export market data to ZIP archive containing CSVs."""
     import tempfile
     import zipfile
 
     try:
-        # Validate output path
         temp_dir = tempfile.gettempdir()
         abs_output = os.path.abspath(output_path)
         if not abs_output.startswith(os.path.abspath(temp_dir)):
             return False, "Invalid output path: must be within temp directory", 0
 
         total_records = 0
-        skipped_intervals = []  # Track computed intervals with missing 1m data
-
-        # IST timezone offset from UTC (5 hours 30 minutes = 19800 seconds)
-        ist_offset = 19800
+        skipped_intervals = []
 
         with zipfile.ZipFile(abs_output, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             with get_connection() as conn:
-                # Get symbols to export
                 if symbols and len(symbols) > 0:
                     symbols_list = [(s["symbol"].upper(), s["exchange"].upper()) for s in symbols]
                 else:
-                    # Get all symbols from catalog
                     symbols_df = conn.execute("""
                         SELECT DISTINCT symbol, exchange FROM data_catalog
                         ORDER BY symbol, exchange
@@ -2678,23 +2218,18 @@ def export_to_zip(
                 if not symbols_list:
                     return False, "No symbols found to export", 0
 
-                # Determine intervals to export
                 intervals_to_export = intervals if intervals else ["D"]
 
                 for sym, exch in symbols_list:
                     market_open_seconds = _get_market_open_seconds(exch)
 
                     for interval in intervals_to_export:
-                        # Determine if this is a daily-aggregated interval (W, MO, Q, Y)
                         is_daily_agg = is_daily_aggregated_interval(interval)
-
-                        # Determine if this is an intraday computed interval (standard or custom)
                         is_intraday_computed = interval in COMPUTED_INTERVALS or is_custom_interval(
                             interval
                         )
 
                         if is_daily_agg:
-                            # Check if D data exists before attempting aggregation
                             check_query = """
                                 SELECT COUNT(*) FROM market_data
                                 WHERE symbol = ? AND exchange = ? AND interval = 'D'
@@ -2709,13 +2244,9 @@ def export_to_zip(
 
                             count = conn.execute(check_query, check_params).fetchone()[0]
                             if count == 0:
-                                logger.warning(
-                                    f"No D data for {sym}:{exch}, skipping daily-aggregated interval {interval}"
-                                )
                                 skipped_intervals.append(f"{sym}:{exch}:{interval}")
                                 continue
 
-                            # Use get_ohlcv which handles daily aggregation
                             df = _get_daily_aggregated_ohlcv(
                                 symbol=sym,
                                 exchange=exch,
@@ -2725,21 +2256,13 @@ def export_to_zip(
                             )
 
                             if not df.empty:
-                                # Format timestamp as date and time columns
-                                df["date"] = pd.to_datetime(
-                                    df["timestamp"] + ist_offset, unit="s"
-                                ).dt.strftime("%Y-%m-%d")
-                                df["time"] = pd.to_datetime(
-                                    df["timestamp"] + ist_offset, unit="s"
-                                ).dt.strftime("%H:%M:%S")
+                                df["date"] = pd.to_datetime(df["timestamp"], unit="s").dt.strftime("%Y-%m-%d")
+                                df["time"] = pd.to_datetime(df["timestamp"], unit="s").dt.strftime("%H:%M:%S")
                                 df = df[
                                     ["date", "time", "open", "high", "low", "close", "volume", "oi"]
                                 ]
 
-                                # Create CSV content
                                 csv_buffer = df.to_csv(index=False)
-
-                                # Sanitize filename
                                 safe_sym = _sanitize_filename(sym)
                                 safe_exch = _sanitize_filename(exch)
                                 safe_int = _sanitize_filename(interval)
@@ -2749,7 +2272,6 @@ def export_to_zip(
                                 total_records += len(df)
 
                         elif is_intraday_computed:
-                            # Check if 1m data exists before attempting aggregation
                             check_query = """
                                 SELECT COUNT(*) FROM market_data
                                 WHERE symbol = ? AND exchange = ? AND interval = '1m'
@@ -2764,43 +2286,26 @@ def export_to_zip(
 
                             count = conn.execute(check_query, check_params).fetchone()[0]
                             if count == 0:
-                                logger.warning(
-                                    f"No 1m data for {sym}:{exch}, skipping computed interval {interval}"
-                                )
                                 skipped_intervals.append(f"{sym}:{exch}:{interval}")
                                 continue
 
-                            # Aggregate from 1m data using the same logic as _get_aggregated_ohlcv
-                            # Filter to only include data after market open to avoid negative timestamp issues
-                            # Support both standard and custom intervals
                             minutes = INTERVAL_MINUTES.get(interval)
                             if minutes is None:
                                 parsed = parse_interval(interval)
                                 if parsed and parsed["type"] == "intraday":
                                     minutes = parsed["minutes"]
                                 else:
-                                    logger.warning(f"Cannot parse interval {interval}, skipping")
                                     skipped_intervals.append(f"{sym}:{exch}:{interval}")
                                     continue
                             interval_seconds = minutes * 60
 
                             query = f"""
-                                SELECT
-                                    (FLOOR((timestamp + {ist_offset}) / 86400) * 86400 - {ist_offset}) +
-                                    {market_open_seconds} +
-                                    FLOOR((((timestamp + {ist_offset}) % 86400) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
-                                    as ts,
-                                    FIRST(open ORDER BY timestamp) as open,
-                                    MAX(high) as high,
-                                    MIN(low) as low,
-                                    LAST(close ORDER BY timestamp) as close,
-                                    SUM(volume) as volume,
-                                    LAST(oi ORDER BY timestamp) as oi
-                                FROM market_data
-                                WHERE symbol = ? AND exchange = ? AND interval = '1m'
-                                AND ((timestamp + {ist_offset}) % 86400) >= {market_open_seconds}
+                                WITH local_data AS (
+                                    SELECT *, timezone(?, to_timestamp(timestamp)) as local_ts
+                                    FROM market_data
+                                    WHERE symbol = ? AND exchange = ? AND interval = '1m'
                             """
-                            params = [sym, exch]
+                            params = [TIMEZONE_STR, sym, exch]
 
                             if start_timestamp:
                                 query += " AND timestamp >= ?"
@@ -2811,38 +2316,50 @@ def export_to_zip(
                                 params.append(end_timestamp)
 
                             query += f"""
-                                GROUP BY (FLOOR((timestamp + {ist_offset}) / 86400) * 86400 - {ist_offset}) +
-                                         {market_open_seconds} +
-                                         FLOOR((((timestamp + {ist_offset}) % 86400) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
+                                ),
+                                bucketed_data AS (
+                                    SELECT *,
+                                        date_trunc('day', local_ts) +
+                                        INTERVAL (
+                                            {market_open_seconds} +
+                                            FLOOR((date_diff('second', date_trunc('day', local_ts), local_ts) - {market_open_seconds}) / {interval_seconds}) * {interval_seconds}
+                                        ) SECOND as local_bucket_start
+                                    FROM local_data
+                                    WHERE date_diff('second', date_trunc('day', local_ts), local_ts) >= {market_open_seconds}
+                                )
+                                SELECT
+                                    epoch(timezone(?, local_bucket_start)) as ts,
+                                    FIRST(open ORDER BY local_ts) as open,
+                                    MAX(high) as high,
+                                    MIN(low) as low,
+                                    LAST(close ORDER BY local_ts) as close,
+                                    SUM(volume) as volume,
+                                    LAST(oi ORDER BY local_ts) as oi
+                                FROM bucketed_data
+                                GROUP BY local_bucket_start
                                 ORDER BY ts ASC
                             """
+                            params.append(TIMEZONE_STR)
 
                             df = conn.execute(query, params).fetchdf()
 
                             if not df.empty:
-                                # Format timestamp as date and time columns
-                                # Add IST offset (19800 seconds) for display since aggregated timestamps are UTC
-                                df["date"] = pd.to_datetime(
-                                    df["ts"] + ist_offset, unit="s"
-                                ).dt.strftime("%Y-%m-%d")
-                                df["time"] = pd.to_datetime(
-                                    df["ts"] + ist_offset, unit="s"
-                                ).dt.strftime("%H:%M:%S")
+                                df["date"] = pd.to_datetime(df["ts"], unit="s").dt.strftime("%Y-%m-%d")
+                                df["time"] = pd.to_datetime(df["ts"], unit="s").dt.strftime("%H:%M:%S")
                                 df = df[
                                     ["date", "time", "open", "high", "low", "close", "volume", "oi"]
                                 ]
 
                         else:
-                            # Direct query for stored intervals (1m, D)
-                            query = """
+                            query = f"""
                                 SELECT
-                                    strftime(to_timestamp(timestamp), '%Y-%m-%d') as date,
-                                    strftime(to_timestamp(timestamp), '%H:%M:%S') as time,
+                                    strftime(timezone(?, to_timestamp(timestamp)), '%Y-%m-%d') as date,
+                                    strftime(timezone(?, to_timestamp(timestamp)), '%H:%M:%S') as time,
                                     open, high, low, close, volume, oi
                                 FROM market_data
                                 WHERE symbol = ? AND exchange = ? AND interval = ?
                             """
-                            params = [sym, exch, interval]
+                            params = [TIMEZONE_STR, TIMEZONE_STR, sym, exch, interval]
 
                             if start_timestamp:
                                 query += " AND timestamp >= ?"
@@ -2858,7 +2375,6 @@ def export_to_zip(
 
                         if not df.empty:
                             csv_content = df.to_csv(index=False)
-                            # Sanitize filename to prevent path traversal
                             filename = f"{_sanitize_filename(sym)}_{_sanitize_filename(exch)}_{_sanitize_filename(interval)}.csv"
                             zf.writestr(filename, csv_content)
                             total_records += len(df)
@@ -2866,24 +2382,15 @@ def export_to_zip(
         if total_records == 0:
             if os.path.exists(abs_output):
                 os.remove(abs_output)
-            if skipped_intervals:
-                return (
-                    False,
-                    f"No data exported. Missing 1m data for computed intervals: {len(skipped_intervals)} symbol(s)",
-                    0,
-                )
             return False, "No data matching the criteria", 0
 
-        file_size = os.path.getsize(abs_output) / (1024 * 1024)  # MB
+        file_size = os.path.getsize(abs_output) / (1024 * 1024)
         message = f"Exported {total_records} records ({file_size:.2f} MB)"
-        if skipped_intervals:
-            message += f". Note: {len(skipped_intervals)} computed interval(s) skipped due to missing 1m data."
         logger.info(message)
         return True, message, total_records
 
     except Exception as e:
         logger.exception(f"Error exporting to ZIP: {e}")
-        # Clean up partial file on error
         if os.path.exists(abs_output):
             try:
                 os.remove(abs_output)
@@ -2899,34 +2406,19 @@ def export_bulk_csv(
     start_timestamp: int | None = None,
     end_timestamp: int | None = None,
 ) -> tuple[bool, str, int]:
-    """
-    Export multiple symbols to a single CSV file.
-
-    Args:
-        output_path: Path to save the CSV file
-        symbols: List of dicts with 'symbol' and 'exchange' keys
-        interval: Filter by interval (optional)
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-
-    Returns:
-        Tuple of (success, message, record_count)
-    """
+    """Export multiple symbols to a single CSV file."""
     import tempfile
 
     try:
-        # Build symbol filter
         conditions = []
         params = []
 
         if symbols and len(symbols) > 0:
-            # Export specific symbols
             symbol_conditions = []
             for sym in symbols:
                 symbol_conditions.append("(symbol = ? AND exchange = ?)")
                 params.extend([sym["symbol"].upper(), sym["exchange"].upper()])
             conditions.append(f"({' OR '.join(symbol_conditions)})")
-        # If no symbols specified, export all (no symbol filter needed)
 
         if interval:
             conditions.append("interval = ?")
@@ -2940,7 +2432,6 @@ def export_bulk_csv(
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-        # Validate output path
         temp_dir = tempfile.gettempdir()
         abs_output = os.path.abspath(output_path)
         if not abs_output.startswith(os.path.abspath(temp_dir)):
@@ -2949,16 +2440,17 @@ def export_bulk_csv(
         query = f"""
             SELECT
                 symbol, exchange, interval,
-                strftime(to_timestamp(timestamp), '%Y-%m-%d') as date,
-                strftime(to_timestamp(timestamp), '%H:%M:%S') as time,
+                strftime(timezone(?, to_timestamp(timestamp)), '%Y-%m-%d') as date,
+                strftime(timezone(?, to_timestamp(timestamp)), '%H:%M:%S') as time,
                 open, high, low, close, volume, oi
             FROM market_data
             WHERE {where_clause}
             ORDER BY symbol, exchange, interval, timestamp
         """
+        full_params = [TIMEZONE_STR, TIMEZONE_STR] + params
 
         with get_connection() as conn:
-            df = conn.execute(query, params).fetchdf()
+            df = conn.execute(query, full_params).fetchdf()
 
             if df.empty:
                 return False, "No data matching the criteria", 0
@@ -2980,18 +2472,7 @@ def get_export_preview(
     start_timestamp: int | None = None,
     end_timestamp: int | None = None,
 ) -> dict[str, Any]:
-    """
-    Get a preview of what will be exported (record count, date range, etc.)
-
-    Args:
-        symbols: List of dicts with 'symbol' and 'exchange' keys (optional)
-        interval: Filter by interval (optional)
-        start_timestamp: Start epoch timestamp (optional)
-        end_timestamp: End epoch timestamp (optional)
-
-    Returns:
-        Dictionary with export preview information
-    """
+    """Get export preview statistics."""
     try:
         conditions = []
         params = []
@@ -3042,9 +2523,6 @@ def get_export_preview(
                     "estimated_size_parquet_mb": 0,
                 }
 
-            # Estimate file sizes (rough approximation)
-            # CSV: ~100 bytes per row
-            # Parquet with ZSTD: ~20 bytes per row
             csv_size = (result[0] * 100) / (1024 * 1024)
             parquet_size = (result[0] * 20) / (1024 * 1024)
 
@@ -3095,27 +2573,9 @@ def create_schedule(
     lookback_days: int = 1,
     description: str | None = None,
 ) -> tuple[bool, str]:
-    """
-    Create a new schedule configuration.
-
-    Args:
-        schedule_id: Unique identifier for the schedule
-        name: Human-readable schedule name
-        schedule_type: 'interval' or 'daily'
-        data_interval: Data timeframe to download ('1m' or 'D')
-        interval_value: Numeric value for interval schedules (e.g., 5 for 5 minutes)
-        interval_unit: Unit for interval schedules ('minutes' or 'hours')
-        time_of_day: Time for daily schedules ('HH:MM')
-        download_source: 'watchlist' or 'catalog'
-        lookback_days: Number of days to look back for incremental downloads
-        description: Optional description
-
-    Returns:
-        Tuple of (success, message)
-    """
+    """Create a new schedule configuration."""
     try:
         with get_connection() as conn:
-            # Check if schedule ID already exists
             existing = conn.execute(
                 "SELECT id FROM historify_schedules WHERE id = ?", [schedule_id]
             ).fetchone()
@@ -3154,10 +2614,7 @@ def create_schedule(
 
 
 def _clean_schedule_record(record: dict[str, Any]) -> dict[str, Any]:
-    """
-    Clean a schedule record for JSON serialization.
-    Converts pandas NaT/NaN values to None and timestamps to ISO strings.
-    """
+    """Clean a schedule record for JSON serialization."""
     import pandas as pd
 
     cleaned = {}
@@ -3320,11 +2777,9 @@ def delete_schedule(schedule_id: str) -> tuple[bool, str]:
     """Delete a schedule and its execution history."""
     try:
         with get_connection() as conn:
-            # Delete execution history first
             conn.execute(
                 "DELETE FROM historify_schedule_executions WHERE schedule_id = ?", [schedule_id]
             )
-            # Delete schedule
             conn.execute("DELETE FROM historify_schedules WHERE id = ?", [schedule_id])
 
         logger.info(f"Deleted schedule: {schedule_id}")
@@ -3370,21 +2825,13 @@ def increment_schedule_run_counts(schedule_id: str, is_success: bool) -> tuple[b
 
 
 def create_schedule_execution(schedule_id: str, download_job_id: str | None = None) -> int | None:
-    """
-    Create a new execution record for a schedule.
-
-    Returns:
-        Execution ID or None on failure
-    """
+    """Create a new execution record for a schedule."""
     import time
 
     try:
-        # Use timestamp-based ID to minimize collision risk
-        # Format: last 9 digits of current timestamp in microseconds
         execution_id = int(time.time() * 1000000) % 1000000000
 
         with get_connection() as conn:
-            # Try inserting, if collision occurs retry with incremented ID
             for attempt in range(3):
                 try:
                     conn.execute(

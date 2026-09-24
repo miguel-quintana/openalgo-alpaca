@@ -23,12 +23,13 @@ import uuid
 from datetime import datetime
 
 import pytest
+import os
 import pytz
 
 from database.sandbox_db import SandboxOrders, db_session
 from sandbox.execution_engine import ExecutionEngine
 
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 STRATEGY = "backlog-regression"
 
 #: Generous enough to absorb a slow CI box, far below the old cost at this depth

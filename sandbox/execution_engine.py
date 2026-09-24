@@ -383,7 +383,7 @@ class ExecutionEngine:
                     order.average_price = existing_trade.price
                     order.filled_quantity = order.quantity
                     order.pending_quantity = 0
-                    order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
+                    order.update_timestamp = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
                     db_session.commit()
                     logger.info(
                         f"Updated order {order.orderid} status to complete (was in race condition)"
@@ -549,7 +549,7 @@ class ExecutionEngine:
                 f"satisfiable - now resting open in the regular book"
             )
             order.order_status = "open"
-            order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
+            order.update_timestamp = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
             db_session.commit()
             self._publish_order_update_event(order, order_status="open")
 
@@ -580,7 +580,7 @@ class ExecutionEngine:
                 price=execution_price,
                 product=order.product,
                 strategy=order.strategy,
-                trade_timestamp=datetime.now(pytz.timezone("Asia/Kolkata")),
+                trade_timestamp=datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))),
             )
 
             db_session.add(trade)
@@ -590,7 +590,7 @@ class ExecutionEngine:
             order.average_price = execution_price
             order.filled_quantity = order.quantity
             order.pending_quantity = 0
-            order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
+            order.update_timestamp = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
             db_session.commit()
 
@@ -627,7 +627,7 @@ class ExecutionEngine:
             try:
                 order.order_status = "rejected"
                 order.rejection_reason = rejection_reason
-                order.update_timestamp = datetime.now(pytz.timezone("Asia/Kolkata"))
+                order.update_timestamp = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
                 db_session.commit()
             except Exception:
                 db_session.rollback()
@@ -731,7 +731,7 @@ class ExecutionEngine:
                     pnl_percent=Decimal("0.00"),
                     accumulated_realized_pnl=Decimal("0.00"),
                     margin_blocked=order_margin,  # Store exact margin from order
-                    created_at=datetime.now(pytz.timezone("Asia/Kolkata")),
+                    created_at=datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))),
                 )
                 db_session.add(position)
                 logger.info(
@@ -1007,7 +1007,7 @@ class ExecutionEngine:
 
     def _generate_trade_id(self):
         """Generate unique trade ID"""
-        now = datetime.now(pytz.timezone("Asia/Kolkata"))
+        now = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
         timestamp = now.strftime("%Y%m%d-%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
         return f"TRADE-{timestamp}-{unique_id}"

@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 analyzer_bp = Blueprint("analyzer_bp", __name__, url_prefix="/analyzer")
 
 
-def format_request(req, ist):
+def format_request(req, server_tz):
     """Format a single request entry"""
     try:
         request_data = (
@@ -42,7 +42,7 @@ def format_request(req, ist):
 
         # Base request info
         formatted_request = {
-            "timestamp": req.created_at.astimezone(ist).strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": req.created_at.astimezone(server_tz).isoformat(),
             "api_type": req.api_type,
             "source": request_data.get("strategy", "Unknown"),
             "request_data": request_data,
@@ -81,12 +81,13 @@ def format_request(req, ist):
 def get_recent_requests():
     """Get recent analyzer requests"""
     try:
-        ist = pytz.timezone("Asia/Kolkata")
+        import os
+        server_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         recent = AnalyzerLog.query.order_by(AnalyzerLog.created_at.desc()).limit(100).all()
         requests = []
 
         for req in recent:
-            formatted = format_request(req, ist)
+            formatted = format_request(req, server_tz)
             if formatted:
                 requests.append(formatted)
 
@@ -99,7 +100,8 @@ def get_recent_requests():
 def get_filtered_requests(start_date=None, end_date=None):
     """Get analyzer requests with date filtering"""
     try:
-        ist = pytz.timezone("Asia/Kolkata")
+        import os
+        server_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         query = AnalyzerLog.query
 
         # Apply date filters if provided
@@ -114,15 +116,15 @@ def get_filtered_requests(start_date=None, end_date=None):
 
         # If no dates provided, default to today
         if not start_date and not end_date:
-            today_ist = datetime.now(ist).date()
-            query = query.filter(func.date(AnalyzerLog.created_at) == today_ist)
+            today_tz = datetime.now(server_tz).date()
+            query = query.filter(func.date(AnalyzerLog.created_at) == today_tz)
 
         # Get results ordered by created_at
         results = query.order_by(AnalyzerLog.created_at.desc()).all()
         requests = []
 
         for req in results:
-            formatted = format_request(req, ist)
+            formatted = format_request(req, server_tz)
             if formatted:
                 requests.append(formatted)
 

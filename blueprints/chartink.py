@@ -55,7 +55,8 @@ STRATEGY_RATE_LIMIT = os.getenv("STRATEGY_RATE_LIMIT", "200 per minute")
 chartink_bp = Blueprint("chartink_bp", __name__, url_prefix="/chartink")
 
 # Initialize scheduler for time-based controls
-scheduler = BackgroundScheduler(timezone=pytz.timezone("Asia/Kolkata"))
+import os
+scheduler = BackgroundScheduler(timezone=pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 scheduler.start()
 
 # Get base URL from environment or default to localhost
@@ -237,7 +238,7 @@ def schedule_squareoff(strategy_id):
             minute=minutes,
             args=[strategy_id],
             id=job_id,
-            timezone=pytz.timezone("Asia/Kolkata"),
+            timezone=pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")),
         )
         logger.info(f"Scheduled squareoff for strategy {strategy_id} at {hours}:{minutes}")
     except Exception as e:
@@ -834,7 +835,7 @@ def webhook(webhook_id):
 
         # Time validations for intraday strategies
         if strategy.is_intraday:
-            current_time = datetime.now(pytz.timezone("Asia/Kolkata")).time()
+            current_time = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))).time()
 
             # Convert strategy times to time objects
             start_time = datetime.strptime(strategy.start_time, "%H:%M").time()

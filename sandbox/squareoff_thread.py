@@ -13,6 +13,7 @@ Manages the square-off manager as a separate daemon thread using APScheduler tha
 import logging
 import threading
 
+import os
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -33,7 +34,7 @@ _scheduler = None
 _scheduler_lock = threading.Lock()
 
 # IST timezone
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 def _schedule_square_off_jobs(scheduler):
@@ -41,6 +42,10 @@ def _schedule_square_off_jobs(scheduler):
     from sandbox.squareoff_manager import SquareOffManager
 
     som = SquareOffManager()
+    
+    # Fetch the timezone string for accurate logging
+    import os
+    tz_name = os.getenv("TIMEZONE", "Asia/Kolkata")
 
     # Get configured times from database
     square_off_configs = {
@@ -48,15 +53,18 @@ def _schedule_square_off_jobs(scheduler):
         "CDS_BCD": get_config("cds_bcd_square_off_time", "16:45"),
         "MCX": get_config("mcx_square_off_time", "23:30"),
         "NCDEX": get_config("ncdex_square_off_time", "17:00"),
+        # Ensure US and OPRA are also explicitly scheduled
+        "US": get_config("us_square_off_time", "15:45"),
+        "OPRA": get_config("opra_square_off_time", "15:45"),
     }
 
-    logger.debug("Scheduling MIS square-off jobs (IST timezone):")
+    logger.debug(f"Scheduling MIS square-off jobs ({tz_name} timezone):")
 
     for config_name, time_str in square_off_configs.items():
         try:
             hour, minute = map(int, time_str.split(":"))
 
-            # Create cron trigger for the specific time in IST
+            # Create cron trigger for the specific time in configured timezone
             trigger = CronTrigger(hour=hour, minute=minute, timezone=IST)
 
             # Schedule the job
@@ -69,18 +77,12 @@ def _schedule_square_off_jobs(scheduler):
                 misfire_grace_time=300,  # Allow 5 minutes grace time
             )
 
-            logger.debug(f"  {config_name}: {time_str} IST (Job ID: {job.id})")
+            logger.debug(f"  {config_name}: {time_str} {tz_name} (Job ID: {job.id})")
 
         except Exception as e:
             logger.exception(f"Failed to schedule square-off for {config_name}: {e}")
 
     # Add a backup job that runs every minute to catch any missed executions
-    # This provides a safety net in case:
-    # - System was restarted during square-off time
-    # - Primary cron job failed to execute
-    # - There were timing issues or delays
-    # Note: The check_and_square_off() function is smart - it only squares off
-    # positions if current time is past the configured square-off time
     backup_job = scheduler.add_job(
         func=som.check_and_square_off,
         trigger="interval",
@@ -94,8 +96,7 @@ def _schedule_square_off_jobs(scheduler):
     logger.debug(f"  Backup check: Every 1 minute (Job ID: {backup_job.id})")
     logger.debug("  Note: APScheduler logs have been set to WARNING level to reduce verbosity")
 
-    # Schedule T+1 settlement job at midnight (00:00 IST)
-    # This moves CNC positions to holdings after market close
+    # Schedule T+1 settlement job at midnight
     try:
         from sandbox.holdings_manager import process_all_t1_settlements
 
@@ -110,38 +111,30 @@ def _schedule_square_off_jobs(scheduler):
             misfire_grace_time=300,
         )
 
-        logger.debug(f"  T+1 Settlement: 00:00 IST (Job ID: {settlement_job.id})")
+        logger.debug(f"  T+1 Settlement: 00:00 {tz_name} (Job ID: {settlement_job.id})")
 
     except Exception as e:
         logger.exception(f"Failed to schedule T+1 settlement: {e}")
 
     # Schedule auto-reset job based on configured reset day and time
-    # This resets all user funds to starting capital on the configured day/time
     try:
         from sandbox.fund_manager import reset_all_user_funds
 
         reset_day = get_config("reset_day", "Never")
         reset_time_str = get_config("reset_time", "00:00")
 
-        # Check if auto-reset is disabled
         if reset_day.lower() == "never":
             logger.debug("  Auto-Reset: Disabled (reset_day = Never)")
         else:
             reset_hour, reset_minute = map(int, reset_time_str.split(":"))
 
-            # Map day names to APScheduler day_of_week values
             day_mapping = {
-                "Monday": 0,
-                "Tuesday": 1,
-                "Wednesday": 2,
-                "Thursday": 3,
-                "Friday": 4,
-                "Saturday": 5,
-                "Sunday": 6,
+                "Monday": 0, "Tuesday": 1, "Wednesday": 2,
+                "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6,
             }
 
             reset_trigger = CronTrigger(
-                day_of_week=day_mapping.get(reset_day, 6),  # Default to Sunday
+                day_of_week=day_mapping.get(reset_day, 6),
                 hour=reset_hour,
                 minute=reset_minute,
                 timezone=IST,
@@ -151,18 +144,17 @@ def _schedule_square_off_jobs(scheduler):
                 func=reset_all_user_funds,
                 trigger=reset_trigger,
                 id="auto_reset",
-                name=f"Auto-Reset Funds ({reset_day} {reset_time_str})",
+                name=f"Auto-Reset Funds ({reset_day} {reset_time_str} {tz_name})",
                 replace_existing=True,
                 misfire_grace_time=300,
             )
 
-            logger.debug(f"  Auto-Reset: {reset_day} {reset_time_str} IST (Job ID: {reset_job.id})")
+            logger.debug(f"  Auto-Reset: {reset_day} {reset_time_str} {tz_name} (Job ID: {reset_job.id})")
 
     except Exception as e:
         logger.exception(f"Failed to schedule auto-reset: {e}")
 
-    # Schedule daily P&L snapshot at 23:59 IST (before session boundary reset)
-    # This captures the end-of-day P&L for historical reporting
+    # Schedule daily P&L snapshot at 23:59 (before session boundary reset)
     try:
         import os
         from datetime import date
@@ -182,26 +174,17 @@ def _schedule_square_off_jobs(scheduler):
 
                 today = date.today()
 
-                # Skip weekends and market holidays (issue #876): the cron
-                # fires every day, and on a non-trading day nothing has moved,
-                # so the snapshot just clones the previous session's numbers
-                # into a new dated row -- the "PnL copied to Saturday/Sunday"
-                # duplication. is_market_holiday covers weekends, exchange
-                # holidays, and correctly stays False for special sessions
-                # (e.g. Muhurat trading on a Saturday).
                 if is_market_holiday(today):
                     logger.debug(
                         f"Skipping daily P&L snapshot for {today}: not a trading day"
                     )
                     return
 
-                # Get all users with funds
                 all_funds = SandboxFunds.query.all()
 
                 for funds in all_funds:
                     user_id = funds.user_id
 
-                    # Calculate positions unrealized P&L
                     positions = (
                         SandboxPositions.query.filter_by(user_id=user_id)
                         .filter(SandboxPositions.quantity != 0)
@@ -209,7 +192,6 @@ def _schedule_square_off_jobs(scheduler):
                     )
                     positions_unrealized = sum(Decimal(str(p.pnl or 0)) for p in positions)
 
-                    # Calculate holdings unrealized P&L
                     holdings = (
                         SandboxHoldings.query.filter_by(user_id=user_id)
                         .filter(SandboxHoldings.quantity != 0)
@@ -217,23 +199,17 @@ def _schedule_square_off_jobs(scheduler):
                     )
                     holdings_unrealized = sum(Decimal(str(h.pnl or 0)) for h in holdings)
 
-                    # Get today's realized P&L
                     realized_pnl = Decimal(str(funds.today_realized_pnl or 0))
-
-                    # Total MTM = Realized + Unrealized (positions + holdings)
                     total_unrealized = positions_unrealized + holdings_unrealized
                     total_mtm = realized_pnl + total_unrealized
 
-                    # Portfolio value
                     portfolio_value = Decimal(str(funds.available_balance or 0)) + Decimal(
                         str(funds.used_margin or 0)
                     )
 
-                    # Check if snapshot already exists for today
                     existing = SandboxDailyPnL.query.filter_by(user_id=user_id, date=today).first()
 
                     if existing:
-                        # Update existing snapshot
                         existing.realized_pnl = realized_pnl
                         existing.positions_unrealized_pnl = positions_unrealized
                         existing.holdings_unrealized_pnl = holdings_unrealized
@@ -242,7 +218,6 @@ def _schedule_square_off_jobs(scheduler):
                         existing.used_margin = funds.used_margin
                         existing.portfolio_value = portfolio_value
                     else:
-                        # Create new snapshot
                         snapshot = SandboxDailyPnL(
                             user_id=user_id,
                             date=today,
@@ -263,25 +238,23 @@ def _schedule_square_off_jobs(scheduler):
                 db_session.rollback()
                 logger.exception(f"Error capturing daily P&L snapshot: {e}")
 
-        # Schedule snapshot at 23:59 IST (before midnight reset)
         snapshot_trigger = CronTrigger(hour=23, minute=59, timezone=IST)
 
         snapshot_job = scheduler.add_job(
             func=capture_daily_pnl_snapshot,
             trigger=snapshot_trigger,
             id="daily_pnl_snapshot",
-            name="Daily PnL Snapshot (23:59 IST)",
+            name=f"Daily PnL Snapshot (23:59 {tz_name})",
             replace_existing=True,
             misfire_grace_time=300,
         )
 
-        logger.debug(f"  Daily PnL Snapshot: 23:59 IST (Job ID: {snapshot_job.id})")
+        logger.debug(f"  Daily PnL Snapshot: 23:59 {tz_name} (Job ID: {snapshot_job.id})")
 
     except Exception as e:
         logger.exception(f"Failed to schedule daily PnL snapshot: {e}")
 
-    # Schedule daily P&L reset at SESSION_EXPIRY_TIME (default 03:00 IST)
-    # This resets today_realized_pnl for all users at session boundary
+    # Schedule daily P&L reset at SESSION_EXPIRY_TIME
     try:
 
         def reset_daily_pnl():
@@ -289,13 +262,8 @@ def _schedule_square_off_jobs(scheduler):
             try:
                 from database.sandbox_db import SandboxFunds, SandboxPositions, db_session
 
-                # Reset funds - today_realized_pnl
                 funds_count = SandboxFunds.query.update({"today_realized_pnl": Decimal("0.00")})
-
-                # Reset positions - today_realized_pnl
-                positions_count = SandboxPositions.query.update(
-                    {"today_realized_pnl": Decimal("0.00")}
-                )
+                positions_count = SandboxPositions.query.update({"today_realized_pnl": Decimal("0.00")})
 
                 db_session.commit()
                 logger.info(
@@ -306,7 +274,6 @@ def _schedule_square_off_jobs(scheduler):
                 db_session.rollback()
                 logger.exception(f"Error in daily P&L reset: {e}")
 
-        # Get reset time from SESSION_EXPIRY_TIME env variable
         session_expiry_str = os.getenv("SESSION_EXPIRY_TIME", "03:00")
         reset_hour, reset_minute = map(int, session_expiry_str.split(":"))
 
@@ -316,16 +283,15 @@ def _schedule_square_off_jobs(scheduler):
             func=reset_daily_pnl,
             trigger=pnl_reset_trigger,
             id="daily_pnl_reset",
-            name=f"Daily PnL Reset ({session_expiry_str} IST)",
+            name=f"Daily PnL Reset ({session_expiry_str} {tz_name})",
             replace_existing=True,
             misfire_grace_time=300,
         )
 
-        logger.debug(f"  Daily PnL Reset: {session_expiry_str} IST (Job ID: {pnl_reset_job.id})")
+        logger.debug(f"  Daily PnL Reset: {session_expiry_str} {tz_name} (Job ID: {pnl_reset_job.id})")
 
     except Exception as e:
         logger.exception(f"Failed to schedule daily PnL reset: {e}")
-
 
 def start_squareoff_scheduler():
     """

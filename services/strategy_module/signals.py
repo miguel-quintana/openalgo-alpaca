@@ -47,7 +47,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 #: The four actions a signal-mode strategy accepts.
 SIGNAL_ACTIONS = ("long_entry", "long_exit", "short_entry", "short_exit")

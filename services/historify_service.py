@@ -223,6 +223,8 @@ def bulk_add_to_watchlist(symbols: list[dict[str, str]]) -> tuple[bool, dict[str
         Tuple of (success, response_data, status_code)
     """
     try:
+        logger.info(f"Bulk adding {len(symbols)} symbols to watchlist")
+        logger.debug(f"Symbols to add: {symbols}")
         # Validate symbols before bulk insert
         validated_symbols = []
         invalid_symbols = []
@@ -1540,6 +1542,7 @@ def _process_download_job(job_id: str, api_key: str):
                 if incremental:
                     # Check existing data range for this symbol
                     data_range = get_data_range(item["symbol"], item["exchange"], job["interval"])
+                    logger.debug(f"Existing data range for {item['symbol']}: {data_range}")
 
                     if (
                         data_range
@@ -1597,6 +1600,7 @@ def _process_download_job(job_id: str, api_key: str):
                                     end_date=before_end,
                                     api_key=api_key,
                                 )
+                                logger.debug(f"Download before response: {response_before}")
                                 if success_before:
                                     total_records += response_before.get("records", 0)
                                 else:
@@ -1626,6 +1630,7 @@ def _process_download_job(job_id: str, api_key: str):
                                     end_date=requested_end,
                                     api_key=api_key,
                                 )
+                                logger.debug(f"Download after response: {response_after}")
                                 if success_after:
                                     total_records += response_after.get("records", 0)
                                 else:
@@ -1653,7 +1658,7 @@ def _process_download_job(job_id: str, api_key: str):
                     end_date=requested_end,
                     api_key=api_key,
                 )
-
+                logger.debug(f"Download response for {item['symbol']}: {response}")
                 if success:
                     records = response.get("records", 0)
                     update_job_item_status(item["id"], "success", records)
@@ -1691,6 +1696,19 @@ def _process_download_job(job_id: str, api_key: str):
         final_status = "completed" if failed == 0 else "completed_with_errors"
         update_job_status(job_id, final_status)
 
+        from database.historify_db import update_schedule_execution
+        execution_id = config.get("execution_id")
+        logger.debug(f"Job {job_id} completed with execution_id: {execution_id}")
+        # At job completion:
+        if execution_id:
+            update_schedule_execution(
+                execution_id,
+                status="completed" if failed == 0 else "completed_with_errors",
+                completed_at=datetime.now(),
+                symbols_success=completed,
+                symbols_failed=failed,
+            )
+        
         # Emit completion event
         _emit_job_complete(job_id, completed, failed, total_items)
 

@@ -21,16 +21,22 @@ DATABASE_URL = os.getenv("DATABASE_URL")  # Replace with your database path
 # Create engine with optimized settings for SQLite concurrency
 engine = create_db_engine(DATABASE_URL)
 
-# Enable WAL mode for better concurrent access
-try:
-    with engine.connect() as conn:
-        conn.execute(text("PRAGMA journal_mode=WAL"))
-        conn.execute(text("PRAGMA synchronous=NORMAL"))
-        conn.execute(text("PRAGMA temp_store=memory"))
-        conn.execute(text("PRAGMA mmap_size=268435456"))  # 256MB
-        conn.commit()
-except Exception as e:
-    logger.warning(f"Could not set SQLite pragmas for master_contract_db: {e}")
+if engine.name == "sqlite":
+    # Enable WAL mode for better concurrent access
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA synchronous=NORMAL"))
+            conn.execute(text("PRAGMA temp_store=memory"))
+            conn.execute(text("PRAGMA mmap_size=268435456"))
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Could not set SQLite pragmas for master_contract_db: {e}")
+elif engine.name == "postgresql":
+    # Optional: Apply PostgreSQL specific optimization parameters here if needed
+    pass
+else:
+    logger.warning(f"Database engine {engine.name} is not specifically optimized in this code.")
 
 db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
 Base = declarative_base()

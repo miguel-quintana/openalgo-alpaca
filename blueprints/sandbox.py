@@ -103,7 +103,7 @@ def api_get_configs():
         defaults = {
             "starting_capital": {
                 "value": "10000000.00",
-                "description": "Starting sandbox capital in INR",
+                "description": "Starting sandbox capital in base currency (INR)",
             },
             "reset_day": {"value": "Never", "description": "Day of week for automatic fund reset"},
             "reset_time": {"value": "00:00", "description": "Time for automatic fund reset (IST)"},
@@ -130,6 +130,14 @@ def api_get_configs():
             "ncdex_square_off_time": {
                 "value": "17:00",
                 "description": "Square-off time for NCDEX MIS",
+            },
+            "us_square_off_time": {
+                "value": "15:45",
+                "description": "Square-off time for US equities MIS",
+            },
+            "opra_square_off_time": {
+                "value": "15:45",
+                "description": "Square-off time for OPRA options MIS",
             },
             "order_check_interval": {
                 "value": "5",
@@ -174,12 +182,14 @@ def api_get_configs():
                 },
             },
             "square_off": {
-                "title": "Square-Off Times (IST)",
+                "title": "Square-Off Times (IST)", # Note: Your UI will automatically replace IST with shortTZ
                 "configs": {
                     "nse_bse_square_off_time": get_config_value("nse_bse_square_off_time"),
                     "cds_bcd_square_off_time": get_config_value("cds_bcd_square_off_time"),
                     "mcx_square_off_time": get_config_value("mcx_square_off_time"),
                     "ncdex_square_off_time": get_config_value("ncdex_square_off_time"),
+                    "us_square_off_time": get_config_value("us_square_off_time"),
+                    "opra_square_off_time": get_config_value("opra_square_off_time"),
                 },
             },
             "intervals": {
@@ -324,6 +334,8 @@ def reset_config():
             "cds_bcd_square_off_time": "16:45",
             "mcx_square_off_time": "23:30",
             "ncdex_square_off_time": "17:00",
+            "us_square_off_time": "15:45",
+            "opra_square_off_time": "15:45",
             "equity_mis_leverage": "5",
             "equity_cnc_leverage": "1",
             "futures_leverage": "10",
@@ -377,7 +389,7 @@ def reset_config():
                 fund.realized_pnl = Decimal("0.00")
                 fund.today_realized_pnl = Decimal("0.00")
                 fund.total_pnl = Decimal("0.00")
-                fund.last_reset_date = datetime.now(pytz.timezone("Asia/Kolkata"))
+                fund.last_reset_date = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
                 fund.reset_count = (fund.reset_count or 0) + 1
                 logger.info(f"Reset sandbox funds for user {user_id}")
             else:
@@ -391,7 +403,7 @@ def reset_config():
                     realized_pnl=Decimal("0.00"),
                     today_realized_pnl=Decimal("0.00"),
                     total_pnl=Decimal("0.00"),
-                    last_reset_date=datetime.now(pytz.timezone("Asia/Kolkata")),
+                    last_reset_date=datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))),
                     reset_count=1,
                 )
                 db_session.add(fund)
@@ -646,7 +658,7 @@ def my_pnl():
         import pytz
 
         user_id = session.get("user")
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
         # Get all positions (both open and closed) for P&L history
         positions = (
@@ -829,9 +841,8 @@ def validate_config(config_key, config_value):
                     valid_capitals = [100000, 500000, 1000000, 2500000, 5000000, 10000000]
                     if value not in valid_capitals:
                         return (
-                            "Starting capital must be one of: ₹1L, ₹5L, ₹10L, ₹25L, ₹50L, or ₹1Cr"
+                            "Starting capital must be one of the predefined allowed values"
                         )
-
                 if config_key.endswith("_leverage"):
                     if value < 1:
                         return "Leverage must be at least 1x"

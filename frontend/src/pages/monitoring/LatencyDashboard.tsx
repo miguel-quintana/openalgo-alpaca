@@ -125,8 +125,10 @@ export default function LatencyDashboard() {
   const formatTimestamp = (timestamp: string) => {
     try {
       const date = new Date(timestamp)
-      return date.toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata',
+      const locale = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+      const timeZone = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+      return date.toLocaleString(locale, {
+        timeZone: timeZone,
         year: 'numeric',
         month: '2-digit',
         day: '2-digit',

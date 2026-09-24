@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+import os
 import pytz
 
 from utils.constants import CRYPTO_EXCHANGES, FNO_EXCHANGES
@@ -203,7 +204,7 @@ class BrokerSymbolCache:
             # Today (IST) for the live-future check on the tradable underlyings index.
             # Computed once per cache load — cache invalidates at the daily session
             # reset (3 AM IST default), so a fresh `today` is picked up each day.
-            ist_today = datetime.now(pytz.timezone("Asia/Kolkata")).date()
+            ist_today = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))).date()
             # Tiny memo for repeated expiry strings (~thousands of FUT rows share
             # a few dozen distinct dates); strptime is cheap but not free.
             _expiry_date_cache: dict[str, "datetime.date | None"] = {}
@@ -285,7 +286,7 @@ class BrokerSymbolCache:
             self.cache_loaded = True
             self.stats.total_symbols = len(symbols)
             self.stats.cache_loads += 1
-            self.stats.last_loaded = datetime.now(pytz.timezone("Asia/Kolkata"))
+            self.stats.last_loaded = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
 
             # Calculate memory usage (rough estimate)
             self.stats.memory_usage_mb = (
@@ -312,7 +313,7 @@ class BrokerSymbolCache:
         """Set session start and next reset time from SESSION_EXPIRY_TIME env variable"""
         import os
 
-        now_ist = datetime.now(pytz.timezone("Asia/Kolkata"))
+        now_ist = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
         self.session_start = now_ist
 
         # Get session expiry time from environment (default to 3:00 if not set)
@@ -338,7 +339,7 @@ class BrokerSymbolCache:
         if not self.cache_loaded or not self.next_reset_time:
             return False
 
-        now_ist = datetime.now(pytz.timezone("Asia/Kolkata"))
+        now_ist = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
         return now_ist < self.next_reset_time
 
     def get_token(self, symbol: str, exchange: str) -> str | None:

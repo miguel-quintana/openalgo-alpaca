@@ -9,6 +9,7 @@ boundary in the database clock.
 
 from datetime import UTC, datetime, timedelta
 
+import os
 import pytz
 
 from utils.logging import get_logger
@@ -17,7 +18,7 @@ logger = get_logger(__name__)
 
 # Host session schedule is anchored to IST; a naive caller is treated as
 # IST wall-clock so the boundary is never silently read as UTC or system time.
-IST = pytz.timezone("Asia/Kolkata")
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 
 def as_db_utc(aware_local):

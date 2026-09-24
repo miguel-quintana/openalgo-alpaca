@@ -161,11 +161,12 @@ def _get_all_open_orders(auth):
 def get_order_book(auth):
     """Fetch all orders for today (open + history) for UI display."""
     try:
-        from datetime import datetime
+        from datetime import 
+        import os
         import pytz
         
         # Get today's date in IST
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         today_date = datetime.now(ist).date()
         
         all_orders = []
@@ -206,10 +207,11 @@ def get_trade_book(auth):
     """Fetch closed / filled orders (fills) for today only."""
     try:
         from datetime import datetime
+        import os
         import pytz
         
         # Get today's date in IST
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         today_date = datetime.now(ist).date()
         
         result = get_api_response("/v2/fills", auth, method="GET")

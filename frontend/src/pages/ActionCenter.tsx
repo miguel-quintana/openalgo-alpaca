@@ -76,6 +76,9 @@ interface ActionCenterResponse {
 }
 
 export default function ActionCenterPage() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
   const [orders, setOrders] = useState<PendingOrder[]>([])
   const [stats, setStats] = useState<OrderStats>({
     total_pending: 0,
@@ -97,6 +100,22 @@ export default function ActionCenterPage() {
   const [isApproving, setIsApproving] = useState<number | null>(null)
   const [isRejecting, setIsRejecting] = useState<number | null>(null)
   const [isApprovingAll, setIsApprovingAll] = useState(false)
+
+  // Dynamically resolve the abbreviation for the configured TIMEZONE (e.g., EST, CST, IST)
+  const [shortTZ, setShortTZ] = useState<string>('Local Time')
+
+  useEffect(() => {
+    try {
+      const formatter = new Intl.DateTimeFormat(LOCALE, {
+        timeZone: TIMEZONE,
+        timeZoneName: 'short'
+      })
+      const tzPart = formatter.formatToParts(new Date()).find(part => part.type === 'timeZoneName')
+      if (tzPart) setShortTZ(tzPart.value)
+    } catch (error) {
+      console.error("Invalid configuration for locale or timezone:", error)
+    }
+  }, [LOCALE, TIMEZONE])
 
   // Socket ref for realtime updates
   const socketRef = useRef<Socket | null>(null)
@@ -324,7 +343,9 @@ export default function ActionCenterPage() {
   const getRelativeTime = (istTimestamp: string): string => {
     if (!istTimestamp) return ''
     try {
-      const orderTime = new Date(istTimestamp.replace(' IST', ''))
+      // Strip hardcoded " IST" from backend and format for reliable browser parsing
+      const cleanTime = istTimestamp.replace(/\s*IST$/i, '').replace(' ', 'T')
+      const orderTime = new Date(cleanTime)
       const now = new Date()
       const diffMs = now.getTime() - orderTime.getTime()
       const diffMins = Math.floor(diffMs / 60000)
@@ -556,7 +577,9 @@ export default function ActionCenterPage() {
                           <Badge variant="secondary">{order.product_type}</Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="text-sm font-mono">{order.created_at_ist}</div>
+                          <div className="text-sm font-mono">
+                            {order.created_at_ist ? `${order.created_at_ist.replace(/\s*IST$/i, '')} ${shortTZ}` : ''}
+                          </div>
                           <div className="text-xs text-muted-foreground">
                             {getRelativeTime(order.created_at_ist)}
                           </div>

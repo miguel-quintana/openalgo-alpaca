@@ -217,8 +217,13 @@ def get_smart_download_status():
         # Add smart download recommendation
         should_download, reason = should_download_master_contract(broker)
         cutoff_hour, cutoff_minute, tz = get_master_contract_cutoff(broker)
+        
+        from datetime import datetime
         import pytz
-        tz_label = "UTC" if tz is pytz.utc else "IST"
+        
+        # Dynamically fetch the string abbreviation of the configured timezone
+        tz_label = "UTC" if tz is pytz.utc else (datetime.now(tz).tzname() or "Local")
+        
         status_data["smart_download"] = {
             "should_download": should_download,
             "reason": reason,

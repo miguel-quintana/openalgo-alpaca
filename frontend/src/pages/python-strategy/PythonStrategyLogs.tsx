@@ -32,6 +32,8 @@ import type { LogContent, LogFile, PythonStrategy } from '@/types/python-strateg
 import { showToast } from '@/utils/toast'
 
 export default function PythonStrategyLogs() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata';
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN';
   const { strategyId } = useParams<{ strategyId: string }>()
   const [strategy, setStrategy] = useState<PythonStrategy | null>(null)
   const [logFiles, setLogFiles] = useState<LogFile[]>([])
@@ -262,7 +264,8 @@ export default function PythonStrategyLogs() {
                       <div className="font-medium text-sm truncate">{formatLogName(log.name)}</div>
                       <div className="flex items-center gap-2 mt-1 text-xs opacity-80">
                         <Clock className="h-3 w-3" />
-                        {new Date(log.last_modified).toLocaleString('en-IN', {
+                        {new Date(log.last_modified).toLocaleString(LOCALE, {
+                          timeZone: TIMEZONE,
                           day: '2-digit',
                           month: 'short',
                           hour: '2-digit',

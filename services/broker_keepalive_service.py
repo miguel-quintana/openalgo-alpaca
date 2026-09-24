@@ -32,7 +32,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_IST = pytz.timezone("Asia/Kolkata")
+_IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 
 _ENABLED = os.getenv("BROKER_CONNECTION_KEEPALIVE", "TRUE").strip().upper() in (
     "TRUE",
@@ -90,6 +90,16 @@ def _resolve_base_url(broker):
         if isinstance(url, str) and url.startswith("http"):
             return url
     return None
+
+def _get_headers_for_broker(broker):
+    """Return the broker's auth headers function from broker.{broker}.api.baseurl, if it exists."""
+    if not broker:
+        return None
+    try:
+        module = importlib.import_module(f"broker.{broker}.api.baseurl")
+    except ImportError:
+        return None
+    return getattr(module, "get_auth_headers", None)("GET", "/")
 
 
 def _get_active_broker():
@@ -159,7 +169,7 @@ def _keepalive_loop():
                 sleep_seconds = 60
             else:
                 client = get_httpx_client()
-                response = client.head(base_url, timeout=5)
+                response = client.get(base_url, timeout=5, headers=_get_headers_for_broker(broker))
                 logger.debug(f"Keep-warm ping {base_url} -> {response.status_code}")
         except Exception as e:
             # Transient network failures are expected (broker maintenance,
@@ -187,5 +197,5 @@ def start_broker_keepalive():
         _thread.start()
         logger.debug(
             f"Broker connection keep-warm started: every {_PING_INTERVAL}s, "
-            f"window {_WINDOW} IST Mon-Fri"
+            f"window {_WINDOW} {_IST} Mon-Fri"
         )

@@ -70,6 +70,8 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+import os
+
 import pandas as pd
 from agno.exceptions import RetryAgentRun
 
@@ -881,7 +883,7 @@ class IndicatorsToolkit(OpenAlgoToolkit):
             "exchange": exchange,
             "interval": interval,
             "source": source,
-            "timezone": "Asia/Kolkata",
+            "timezone": os.getenv("TIMEZONE", "Asia/Kolkata"),
             "bars_computed_over": int(len(frame)),
             "bars_fetched": int(bars_fetched),
             "values_returned": len(candles),

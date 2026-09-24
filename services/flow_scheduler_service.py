@@ -405,11 +405,12 @@ def is_within_market_hours(
         override - an override narrows or extends the clock, it does not
         reopen a holiday.
     """
+    import os
     import pytz
 
     from database.market_calendar_db import get_effective_session_window
 
-    ist = pytz.timezone("Asia/Kolkata")
+    ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     now = now or datetime.now(ist)
 
     exch = (exchange or DEFAULT_MARKET_HOURS_EXCHANGE).upper()

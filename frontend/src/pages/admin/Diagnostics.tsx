@@ -40,6 +40,8 @@ import type {
 } from '@/types/admin'
 import { showToast } from '@/utils/toast'
 
+const DEFAULT_LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-US'
+const DEFAULT_TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'America/New_York'
 const LEVEL_OPTIONS = ['', 'ERROR', 'CRITICAL', 'WARNING', 'INFO']
 
 function KV({ label, value }: { label: string; value: React.ReactNode }) {
@@ -141,7 +143,17 @@ export default function Diagnostics() {
     try {
       const response = await adminApi.runDiagnostics()
       setDiagChecks(response.checks)
-      setDiagRanAt(response.ran_at)
+      const ranAtFormatted = new Date().toLocaleString(DEFAULT_LOCALE, {
+        timeZone: DEFAULT_TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+      })
+      setDiagRanAt(ranAtFormatted)
       showToast.success('Diagnostics complete', 'admin')
     } catch {
       showToast.error('Diagnostics failed', 'admin')
@@ -150,7 +162,7 @@ export default function Diagnostics() {
     }
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time initial load on mount; loadAll is recreated each render and adding it would re-run the load on every render
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-time initial load on mount
   useEffect(() => {
     loadAll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -330,7 +342,8 @@ export default function Diagnostics() {
           <div>
             <KV label="Server time" value={info?.time.server_time} />
             <KV label="Server timezone" value={info?.time.server_tz} />
-            <KV label="IST time" value={info?.time.ist_time} />
+            <KV label="Configured timezone" value={info?.time.configured_tz || DEFAULT_TIMEZONE} />
+            <KV label="Configured time" value={info?.time.configured_time || info?.time.ist_time} />
           </div>
         </Section>
 
@@ -411,8 +424,8 @@ export default function Diagnostics() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Size</TableHead>
-              <TableHead>Modified</TableHead>
+              <TableHead>Size / Storage</TableHead>
+              <TableHead>Modified / Details</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -426,7 +439,13 @@ export default function Diagnostics() {
                     <Badge variant="secondary">missing</Badge>
                   )}
                 </TableCell>
-                <TableCell>{db.exists ? `${db.size_mb} MB` : '—'}</TableCell>
+                <TableCell>
+                  {db.exists
+                    ? typeof db.size_mb === 'number'
+                      ? `${db.size_mb} MB`
+                      : db.size_mb
+                    : '—'}
+                </TableCell>
                 <TableCell className="text-muted-foreground">{db.modified ?? '—'}</TableCell>
               </TableRow>
             ))}

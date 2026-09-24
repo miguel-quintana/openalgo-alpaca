@@ -31,8 +31,8 @@ from utils.session import check_session_validity
 logger = get_logger(__name__)
 
 chart_test_bp = Blueprint("chart_test_bp", __name__)
-
-IST = pytz.timezone("Asia/Kolkata")
+import os
+IST = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
 # Seconds to add to a UTC epoch so that, when lightweight-charts renders the
 # value as UTC, the displayed wall-clock equals IST. 5h30m = 19800s = a whole
 # number of minutes, so minute-bucketing is identical before/after the shift.

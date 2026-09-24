@@ -1305,9 +1305,19 @@ export default function SecurityDashboard() {
                         <TableRow key={idx}>
                           <TableCell className="text-xs whitespace-nowrap">
                             {attempt.timestamp
-                              ? new Date(attempt.timestamp).toLocaleString('en-IN', {
-                                  timeZone: 'Asia/Kolkata',
-                                })
+                              ? new Date(attempt.timestamp).toLocaleString(
+                                  import.meta.env.VITE_APP_LOCALE || 'en-IN',
+                                  {
+                                    timeZone: import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata',
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: true,
+                                  }
+                                )
                               : '-'}
                           </TableCell>
                           <TableCell>
@@ -1397,10 +1407,20 @@ export default function SecurityDashboard() {
                         <TableRow key={s.session_id}>
                           <TableCell className="text-xs whitespace-nowrap">
                             {s.login_time
-                              ? new Date(s.login_time).toLocaleString('en-IN', {
-                                  timeZone: 'Asia/Kolkata',
-                                })
-                              : '-'}
+                                ? new Date(s.login_time).toLocaleString(
+                                    import.meta.env.VITE_APP_LOCALE || 'en-IN',
+                                    {
+                                      timeZone: import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata',
+                                      year: 'numeric',
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      second: '2-digit',
+                                      hour12: true,
+                                    }
+                                  )
+                                : '-'}
                           </TableCell>
                           <TableCell className="font-mono text-sm">{s.ip_address || '-'}</TableCell>
                           <TableCell>{s.broker || '-'}</TableCell>
@@ -1414,9 +1434,19 @@ export default function SecurityDashboard() {
                           </TableCell>
                           <TableCell className="text-xs whitespace-nowrap">
                             {s.last_seen
-                              ? new Date(s.last_seen).toLocaleString('en-IN', {
-                                  timeZone: 'Asia/Kolkata',
-                                })
+                              ? new Date(s.last_seen).toLocaleString(
+                                  import.meta.env.VITE_APP_LOCALE || 'en-US',
+                                  {
+                                    timeZone: import.meta.env.VITE_SERVER_TIMEZONE || 'America/New_York',
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    hour12: true,
+                                  }
+                                )
                               : '-'}
                           </TableCell>
                           <TableCell>

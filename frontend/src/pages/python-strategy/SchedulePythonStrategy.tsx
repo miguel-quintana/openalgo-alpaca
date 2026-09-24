@@ -1,5 +1,5 @@
 import { ArrowLeft, Calendar, Clock } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { pythonStrategyApi } from '@/api/python-strategy'
 import { Button } from '@/components/ui/button'
@@ -13,9 +13,15 @@ import { CRYPTO_EXCHANGE_VALUE, SCHEDULE_DAYS } from '@/types/python-strategy'
 import { showToast } from '@/utils/toast'
 
 export default function SchedulePythonStrategy() {
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata';
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN';
+
   const { strategyId } = useParams<{ strategyId: string }>()
   const navigate = useNavigate()
   const [strategy, setStrategy] = useState<PythonStrategy | null>(null)
+  
+  const [shortTZ, setShortTZ] = useState<string>('Local Time')
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [exchange, setExchange] = useState<string>('NSE')
@@ -26,6 +32,38 @@ export default function SchedulePythonStrategy() {
   const { exchanges, getWindow } = useStrategyExchanges()
   const isCrypto = exchange === CRYPTO_EXCHANGE_VALUE
   const sessionWindow = getWindow(exchange)
+
+  // Safely inject US and OPRA into the list if the backend API doesn't provide them yet
+  const extendedExchanges = useMemo(() => {
+    const list = [...exchanges]
+    if (!list.some((e) => e.value === 'US')) {
+      list.push({ value: 'US', label: 'US — US Equities' } as any)
+    }
+    if (!list.some((e) => e.value === 'OPRA')) {
+      list.push({ value: 'OPRA', label: 'OPRA — US Options' } as any)
+    }
+    return list
+  }, [exchanges])
+
+  const handleExchangeChange = (value: string) => {
+    setExchange(value)
+    const session = getWindow(value)
+    
+    if (session) {
+      setStartTime(session.start)
+      setStopTime(session.stop)
+    } else if (value === 'US' || value === 'OPRA') {
+      // Fallback to standard US market hours (09:30 AM - 4:00 PM)
+      setStartTime('09:30')
+      setStopTime('16:00')
+    }
+    
+    setSelectedDays(
+      value === CRYPTO_EXCHANGE_VALUE
+        ? ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+        : ['mon', 'tue', 'wed', 'thu', 'fri']
+    )
+  }
 
   useEffect(() => {
     const fetchStrategy = async () => {
@@ -48,6 +86,19 @@ export default function SchedulePythonStrategy() {
     }
     fetchStrategy()
   }, [strategyId, navigate])
+
+  useEffect(() => {
+    try {
+      const formatter = new Intl.DateTimeFormat(LOCALE, {
+        timeZone: TIMEZONE,
+        timeZoneName: 'short'
+      })
+      const tzPart = formatter.formatToParts(new Date()).find(part => part.type === 'timeZoneName')
+      if (tzPart) setShortTZ(tzPart.value)
+    } catch (error) {
+      console.error("Invalid configuration for locale or timezone:", error)
+    }
+  }, [])
 
   const handleDayToggle = (day: string) => {
     setSelectedDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]))
@@ -150,7 +201,7 @@ export default function SchedulePythonStrategy() {
             Schedule Settings
           </CardTitle>
           <CardDescription>
-            Set when the strategy should automatically start and stop (IST)
+            Set when the strategy should automatically start and stop ({shortTZ})
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -161,10 +212,10 @@ export default function SchedulePythonStrategy() {
               <select
                 id="exchange"
                 value={exchange}
-                onChange={(e) => setExchange(e.target.value)}
+                onChange={(e) => handleExchangeChange(e.target.value)}
                 className="w-full px-3 py-2 text-sm border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                {exchanges.map((opt) => (
+                {extendedExchanges.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -183,7 +234,7 @@ export default function SchedulePythonStrategy() {
                 <div className="space-y-2">
                   <Label htmlFor="start_time" className="flex items-center gap-2">
                     <Clock className="h-4 w-4" />
-                    Start Time (IST)
+                    Start Time ({shortTZ})
                   </Label>
                   <Input
                     id="start_time"
@@ -196,7 +247,7 @@ export default function SchedulePythonStrategy() {
                 <div className="space-y-2">
                   <Label htmlFor="stop_time" className="flex items-center gap-2">
                     <Clock className="h-4 w-4" />
-                    Stop Time (IST)
+                    Stop Time ({shortTZ})
                   </Label>
                   <Input
                     id="stop_time"
@@ -209,7 +260,7 @@ export default function SchedulePythonStrategy() {
               </div>
               {sessionWindow && !isCrypto && (
                 <p className="text-xs text-muted-foreground">
-                  {exchange} trades {sessionWindow.start} - {sessionWindow.stop} IST today. The
+                  {exchange} trades {sessionWindow.start} - {sessionWindow.stop} {shortTZ} today. The
                   strategy is stopped at whichever comes first, your stop time or the session close.
                 </p>
               )}

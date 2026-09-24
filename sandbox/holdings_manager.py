@@ -127,7 +127,7 @@ class HoldingsManager:
         Should be called daily after market close
         """
         try:
-            ist = pytz.timezone("Asia/Kolkata")
+            ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
             today = datetime.now(ist).date()
             settlement_cutoff = datetime.combine(today, datetime.min.time())
 
@@ -403,7 +403,7 @@ def process_all_t1_settlements():
     """Process T+1 settlement for all users"""
     try:
         # Get all unique users with CNC positions
-        ist = pytz.timezone("Asia/Kolkata")
+        ist = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
         today = datetime.now(ist).date()
         settlement_cutoff = datetime.combine(today, datetime.min.time())
 

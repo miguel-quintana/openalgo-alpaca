@@ -39,7 +39,7 @@ def sanitize_request_data(data):
     return data
 
 
-def format_log_entry(log, ist):
+def format_log_entry(log, server_tz):
     """Format a single log entry"""
     try:
         request_data = sanitize_request_data(log.request_data)
@@ -63,7 +63,7 @@ def format_log_entry(log, ist):
             "request_data": request_data,
             "response_data": response_data,
             "strategy": strategy,
-            "created_at": log.created_at.astimezone(ist).strftime("%Y-%m-%d %I:%M:%S %p"),
+            "created_at": log.created_at.astimezone(server_tz).isoformat(),
         }
     except Exception as e:
         logger.exception(f"Error formatting log {log.id}: {str(e)}")
@@ -73,13 +73,14 @@ def format_log_entry(log, ist):
             "request_data": {},
             "response_data": {},
             "strategy": "Unknown",
-            "created_at": log.created_at.astimezone(ist).strftime("%Y-%m-%d %I:%M:%S %p"),
+            "created_at": log.created_at.astimezone(server_tz).isoformat(),
         }
 
 
 def get_filtered_logs(start_date=None, end_date=None, search_query=None, page=None, per_page=None):
     """Get filtered logs with pagination"""
-    ist = pytz.timezone("Asia/Kolkata")
+    import os
+    server_tz = pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata"))
     query = OrderLog.query
 
     try:
@@ -95,8 +96,8 @@ def get_filtered_logs(start_date=None, end_date=None, search_query=None, page=No
 
         # If no dates provided, default to today
         if not start_date and not end_date:
-            today_ist = datetime.now(ist).date()
-            query = query.filter(func.date(OrderLog.created_at) == today_ist)
+            today_tz = datetime.now(server_tz).date()
+            query = query.filter(func.date(OrderLog.created_at) == today_tz)
 
         # Apply search filter if provided
         if search_query:
@@ -124,7 +125,7 @@ def get_filtered_logs(start_date=None, end_date=None, search_query=None, page=No
             query = query.order_by(OrderLog.created_at.desc())
 
         # Format logs
-        logs = [format_log_entry(log, ist) for log in query.all()]
+        logs = [format_log_entry(log, server_tz) for log in query.all()]
         logger.info(f"Retrieved {len(logs)} logs")
 
         return logs, total_pages, total_logs

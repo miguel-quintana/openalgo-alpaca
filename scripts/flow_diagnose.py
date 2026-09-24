@@ -37,6 +37,7 @@ def diagnose(workflow_id: int) -> int:
 
     load_dotenv()
 
+    import os
     import pytz
 
     from database.flow_db import get_workflow, get_workflow_api_key
@@ -55,7 +56,7 @@ def diagnose(workflow_id: int) -> int:
     # nodes compare against the server's local clock, so a host that is not on
     # IST evaluates every window in the wrong timezone.
     local = datetime.now()
-    ist = datetime.now(pytz.timezone("Asia/Kolkata"))
+    ist = datetime.now(pytz.timezone(os.getenv("TIMEZONE", "Asia/Kolkata")))
     skew = round(
         (local.replace(tzinfo=None) - ist.replace(tzinfo=None)).total_seconds() / 60
     )

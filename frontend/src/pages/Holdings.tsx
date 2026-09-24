@@ -28,7 +28,7 @@ import { PlaceOrderDialog } from '@/components/trading'
 import { calculateLiveStats, useLivePrice } from '@/hooks/useLivePrice'
 import { useOrderEventRefresh } from '@/hooks/useOrderEventRefresh'
 import { usePageVisibility } from '@/hooks/usePageVisibility'
-import { cn, makeFormatCurrency, sanitizeCSV } from '@/lib/utils'
+import { cn, sanitizeCSV } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
 import { onModeChange } from '@/stores/themeStore'
 import type { Holding, HoldingsStats } from '@/types/trading'
@@ -50,7 +50,27 @@ interface HoldingOrderIntent {
 
 export default function Holdings() {
   const { apiKey, user } = useAuthStore()
-  const formatCurrency = useMemo(() => makeFormatCurrency(user?.broker), [user?.broker])
+  
+  const TIMEZONE = import.meta.env.VITE_SERVER_TIMEZONE || 'Asia/Kolkata'
+  const LOCALE = import.meta.env.VITE_APP_LOCALE || 'en-IN'
+
+  const formatCurrency = useMemo(() => {
+    const isUSBroker = ['schwab', 'alpaca', 'tradier'].includes(user?.broker?.toLowerCase() || '')
+    const currency = import.meta.env.VITE_APP_CURRENCY || (isUSBroker ? 'USD' : 'INR')
+
+    return (value: number) => {
+      // Expand to 4 decimal places if the value has sub-penny precision
+      const maxDecimals = Math.abs(value * 100) % 1 !== 0 ? 4 : 2;
+      
+      return new Intl.NumberFormat(LOCALE, {
+        style: 'currency',
+        currency: currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: maxDecimals,
+      }).format(value)
+    }
+  }, [user?.broker, LOCALE])
+
   const [holdings, setHoldings] = useState<Holding[]>([])
   const [stats, setStats] = useState<HoldingsStats | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -198,7 +218,13 @@ export default function Holdings() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      const filename = `holdings_${new Date().toISOString().split('T')[0]}.csv`
+      
+      // Format date as YYYY-MM-DD strictly honoring the configured timezone
+      const dateStr = new Intl.DateTimeFormat(LOCALE, { 
+        timeZone: TIMEZONE 
+      }).format(new Date())
+      
+      const filename = `holdings_${dateStr}.csv`
       a.download = filename
       a.click()
       // Revoke the object URL to free memory
