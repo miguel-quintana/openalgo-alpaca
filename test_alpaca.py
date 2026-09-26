@@ -1,6 +1,6 @@
 import os
+from dotenv import load_dotenv
 import time
-import json
 from pprint import pprint
 
 # 1. Mock DB functions to avoid needing a live SQLite database connection just for testing
@@ -18,9 +18,11 @@ from broker.alpaca.api.order_api import (
     get_open_position
 )
 
+load_dotenv()
+
 # 2. Insert your Alpaca Paper Trading Credentials
-AUTH_TOKEN = "PK6F4PRVW5L75TO7FE7LRFGPSB"
-os.environ["BROKER_API_SECRET"] = "B3SEHy9eLhjRVHW1CM7asVX4qMoXJbuyEzrcpsbNfdXn"
+AUTH_TOKEN = os.getenv("BROKER_API_KEY")
+os.environ["BROKER_API_SECRET"] = os.getenv("BROKER_API_SECRET")
 
 # Ensure Alpaca base URL points to Paper (https://paper-api.alpaca.markets)
 os.environ["ALPACA_BASE_URL"] = "https://paper-api.alpaca.markets"

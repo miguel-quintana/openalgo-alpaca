@@ -3,13 +3,17 @@ import json
 import time
 import threading
 import websocket
+import os
+from dotenv import load_dotenv
+
 
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
 BASE_URL = "http://127.0.0.1:5000/api/v1"
 WS_URL = "ws://127.0.0.1:8765" 
-API_KEY = "db2551dd26829e4ff35ff106b2649e7cac18a957d44b98e29d4f0e375c889630"  # Replace with your OpenAlgo API Key
+load_dotenv()
+API_KEY = os.environ["OPENALGO_API_KEY"]
 
 # ==============================================================================
 # REST API HELPER
