@@ -43,7 +43,38 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+from telegram.error import NetworkError
+from telegram.ext import ContextTypes
 
+class SilentTelegramFilter(logging.Filter):
+    """Filter out expected network disconnect tracebacks from python-telegram-bot."""
+    def __init__(self):
+        super().__init__()
+        self.last_warn = 0
+        self.last_error_time = 0  # <--- Added to track exact drop time
+
+    def filter(self, record):
+        msg = str(record.getMessage())
+        
+        # Check if this is the specific Telegram Updater network drop
+        if "Exception happened while polling for updates" in msg or "getaddrinfo failed" in msg:
+            import time
+            current_time = time.time()
+            self.last_error_time = current_time
+            
+            # Only warn once every 10 seconds to avoid console spam
+            if current_time - self.last_warn > 10:
+                logger.warning("Telegram network connection dropped. Auto-reconnecting silently...")
+                self.last_warn = current_time
+                
+            # Block the original massive traceback from being printed
+            return False
+            
+        return True
+
+# Initialize a global instance of the filter so we can check it
+silent_telegram_filter = SilentTelegramFilter()
+        
 class TelegramBotService:
     """Service class for managing Telegram bot operations with OpenAlgo SDK integration"""
 
@@ -57,6 +88,30 @@ class TelegramBotService:
         self.bot_loop = None  # Store the bot's event loop
         self.sdk_clients = {}  # Cache for OpenAlgo SDK clients per user
         self._stop_event = original_threading.Event()  # Thread-safe stop signal
+
+    async def _connection_monitor(self):
+        """Background task that watches for successful reconnections."""
+        import time
+        global silent_telegram_filter
+        
+        was_down = False
+        
+        while not self._stop_event.is_set():
+            await asyncio.sleep(2)  # Check every 2 seconds
+            
+            current_time = time.time()
+            # If an error happened in the last 15 seconds, we are currently "down"
+            is_currently_down = (current_time - silent_telegram_filter.last_error_time) < 15
+            
+            if is_currently_down and not was_down:
+                # We just went down
+                was_down = True
+            elif not is_currently_down and was_down:
+                # We were down, but 15 seconds have passed with NO network errors!
+                # Since the Telegram background polling loop tries every few seconds, 
+                # 15 seconds of silence means it MUST be connected successfully.
+                was_down = False
+                logger.info("✅ Telegram network connection restored. Bot reconnected successfully.")
 
     def _get_sdk_client(self, telegram_id: int) -> openalgo_api | None:
         """Get or create OpenAlgo SDK client for a user"""
@@ -680,15 +735,48 @@ class TelegramBotService:
             CallbackQueryHandler,
             CommandHandler,
         )
+        from telegram.request import HTTPXRequest
+
+        # --- APPLY GLOBAL CONSOLE FILTER ---
+        # Instead of creating a new SilentTelegramFilter(), use the global one
+        global silent_telegram_filter
+        for handler in logging.getLogger().handlers:
+            # Remove any old instances first to prevent duplicates if restarted
+            handler.addFilter(silent_telegram_filter)
+        
+        # Also catch the specific telegram loggers just in case
+        logging.getLogger("telegram.ext._updater").addFilter(silent_telegram_filter)
+        logging.getLogger("telegram.ext.Updater").addFilter(silent_telegram_filter)
+        logging.getLogger("telegram.bot").addFilter(silent_telegram_filter)
+        logging.getLogger("httpx").addFilter(silent_telegram_filter)
+        # -----------------------------------
 
         retry_count = 0
         max_retries = 5
         base_delay = 5  # seconds
 
+        from telegram.request import HTTPXRequest
+
         while retry_count < max_retries:
             try:
-                # Create application
-                self.application = Application.builder().token(self.bot_token).build()
+                # 1. Custom HTTP request settings for resilient long-polling
+                # read_timeout must be longer than the Telegram long-poll timeout
+                q_request = HTTPXRequest(
+                    connection_pool_size=8,
+                    read_timeout=60.0, 
+                    write_timeout=20.0,
+                    connect_timeout=20.0,
+                    pool_timeout=20.0
+                )
+
+                # 2. Create application with custom timeouts injected into the getUpdates loop
+                self.application = (
+                    Application.builder()
+                    .token(self.bot_token)
+                    .request(q_request)
+                    .get_updates_request(q_request)
+                    .build()
+                )
 
                 # Add command handlers
                 self.application.add_handler(CommandHandler("start", self.cmd_start))
@@ -727,15 +815,22 @@ class TelegramBotService:
                 )
 
                 self.is_running = True
+                self.was_disconnected = False
                 update_bot_config({"is_active": True})
                 logger.debug("Telegram bot started successfully and is polling for updates")
 
                 # Reset retry count on successful connection
                 retry_count = 0
 
+                # --- START THE CONNECTION MONITOR ---
+                monitor_task = asyncio.create_task(self._connection_monitor())
+
                 # Keep running until stop signal
                 while not self._stop_event.is_set():
                     await asyncio.sleep(1)
+                    
+                # Clean up the monitor task when stopping
+                monitor_task.cancel()
 
                 # Stop signal received - clean shutdown
                 logger.debug("Stop signal received, shutting down bot...")
@@ -757,14 +852,17 @@ class TelegramBotService:
                 httpx.ConnectError,
                 httpx.NetworkError,
                 httpx.TimeoutException,
+                httpx.ReadError,
                 telegram.error.NetworkError,
             ) as e:
                 retry_count += 1
-                delay = base_delay * (2**retry_count)  # Exponential backoff
+                delay = base_delay * (2**min(retry_count, 5))  # Exponential backoff (cap at ~160s)
+                
+                # Use WARNING instead of ERROR to prevent log spam, and only show the summary
                 logger.warning(
-                    f"Network error while connecting to Telegram (attempt {retry_count}/{max_retries}): {type(e).__name__}"
+                    f"Telegram connection dropped ({type(e).__name__}). "
+                    f"Auto-reconnecting in {delay}s (Attempt {retry_count}/{max_retries})..."
                 )
-                logger.debug(f"Network error details: {str(e)}")
 
                 if retry_count < max_retries:
                     logger.info(f"Retrying in {delay} seconds...")

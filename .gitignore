@@ -151,3 +151,6 @@ docs/audit/qa_audit/**/~$*
 
 rontend/node
 frontend/dist
+
+log/*
+db/*

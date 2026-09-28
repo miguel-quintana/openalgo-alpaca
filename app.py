@@ -7,6 +7,15 @@ import os
 import re
 import sys
 
+# MUST be set before ANY whatsapp/wars imports happen anywhere in the app
+_RUST_LOG_DEFAULT = (
+    "error"
+    ",wacore::send=off"
+    ",whatsapp_rust::message=off"
+    ",wacore_libsignal::protocol::session_cipher=off"
+    ",whatsapp_rust::client::lifecycle=warn"
+)
+os.environ.setdefault("RUST_LOG", _RUST_LOG_DEFAULT)
 
 def _ensure_db_directory() -> None:
     """Create the SQLite database directory before any engine connects.

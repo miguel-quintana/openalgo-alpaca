@@ -66,11 +66,13 @@ import os
 # Default policy: error for everything, off for the three noisy targets.
 # Set RUST_LOG in the shell/.env to override for diagnostics (setdefault
 # means an explicit operator-set value always wins).
+# ALSO IN app.py here just for reference
 _RUST_LOG_DEFAULT = (
     "error"
     ",wacore::send=off"
     ",whatsapp_rust::message=off"
     ",wacore_libsignal::protocol::session_cipher=off"
+    ",whatsapp_rust::client::lifecycle=warn"  # <--- ADD THIS LINE
 )
 os.environ.setdefault("RUST_LOG", _RUST_LOG_DEFAULT)
 
@@ -95,6 +97,8 @@ from database.whatsapp_db import (
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+import sys
 
 # wars supports E.164 digit strings as JIDs anywhere a "to" is accepted.
 # We still normalize internally so cached lookups are stable.
@@ -663,12 +667,31 @@ class WhatsAppBotService:
             logger.info("WhatsApp bot thread up and connected")
             self._ready_event.set()
 
-            # Pump loop. Each iteration: (1) drain inbound wars events that the
-            # callbacks marshaled here from tokio threads, then (2) wait briefly
-            # for an outbound send command. Both halves run on this greenlet, so
-            # every green operation (DB, SocketIO, wars.send) is hub-safe.
+            # --- CONNECTION STATE TRACKING ---
+            was_down = False
+            last_check_time = 0
+            # ---------------------------------
+
+            # Pump loop. Each iteration: (1) check connection state periodically,
+            # (2) drain inbound wars events, then (3) wait for outbound send commands.
             while not self._stop_event.is_set():
-                # (1) inbound wars events (on_message / on_disconnect)
+                
+                # (1) Periodically check connection state safely on the worker thread (every 2s)
+                current_time = time.time()
+                if current_time - last_check_time >= 2.0:
+                    last_check_time = current_time
+                    try:
+                        is_currently_connected = wa.is_connected()
+                        if not is_currently_connected and not was_down:
+                            was_down = True
+                            logger.warning("WhatsApp network connection dropped. Auto-reconnecting silently...")
+                        elif is_currently_connected and was_down:
+                            was_down = False
+                            logger.info("✅ WhatsApp network connection restored. Bot reconnected successfully.")
+                    except Exception:
+                        pass
+
+                # (2) inbound wars events (on_message / on_disconnect)
                 while self._inbound:
                     try:
                         evt = self._inbound.popleft()
@@ -676,7 +699,7 @@ class WhatsAppBotService:
                         break
                     self._handle_inbound(wa, evt)
 
-                # (2) outbound send commands from request greenlets
+                # (3) outbound send commands from request greenlets
                 try:
                     cmd = self._cmd_queue.get(timeout=0.1)
                 except queue.Empty:

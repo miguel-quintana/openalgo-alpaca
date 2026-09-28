@@ -374,6 +374,7 @@ class WebSocketProxy:
         stats_path = os.getenv("WS_PROXY_STATS_FILE", os.path.join("log", "ws_proxy_stats.json"))
         tmp_path = f"{stats_path}.tmp"
         while self.running:
+            import time # Ensure this is imported at the top of the file
             try:
                 health = self.get_health_stats()
                 snapshot = {
@@ -383,12 +384,21 @@ class WebSocketProxy:
                     "clients_connected": health["clients"]["connected_count"],
                     "brokers": health["broker_adapters"]["brokers"],
                 }
-                with open(tmp_path, "w") as f:
+            
+                with open(tmp_path, 'w') as f:
                     json.dump(snapshot, f)
-                os.replace(tmp_path, stats_path)
+                
+                try:
+                    os.replace(tmp_path, stats_path)
+                except PermissionError:
+                    # Windows file locking fallback: wait 10ms and try once more
+                    time.sleep(0.01)
+                    os.replace(tmp_path, stats_path)
+                    
             except Exception as e:
                 # Never let stats writing affect the feed path.
-                logger.debug(f"Stats snapshot write failed: {e}")
+                logger.debug(f"Stats snapshot write failed: {e}")            
+
             await aio.sleep(self.STATS_FILE_INTERVAL)
 
     def get_health_stats(self) -> dict:
