@@ -605,7 +605,13 @@ class TelegramBotService:
             from utils.httpx_client import get_httpx_client
 
             try:
-                response = get_httpx_client().get(f"https://api.telegram.org/bot{token}/getMe", timeout=10)
+                try:
+                    # Simple GET request to validate the token
+                    response = get_httpx_client().get(f"https://api.telegram.org/bot{token}/getMe", timeout=10)
+                except httpx.RequestError as e:
+                    # Catch network drops (like WinError 10054) gracefully without a traceback
+                    logger.warning(f"Telegram initialization network error: {e}")
+                    return False, f"Network error during initialization: {e}"
 
                 if response.status_code == 200:
                     data = response.json()

@@ -677,6 +677,7 @@ class WhatsAppBotService:
             while not self._stop_event.is_set():
                 
                 # (1) Periodically check connection state safely on the worker thread (every 2s)
+                import time
                 current_time = time.time()
                 if current_time - last_check_time >= 2.0:
                     last_check_time = current_time
@@ -684,7 +685,8 @@ class WhatsAppBotService:
                         is_currently_connected = wa.is_connected()
                         if not is_currently_connected and not was_down:
                             was_down = True
-                            logger.warning("WhatsApp network connection dropped. Auto-reconnecting silently...")
+                            # We omit printing a Python warning here because the Rust library 
+                            # will print its own ERROR to the console.
                         elif is_currently_connected and was_down:
                             was_down = False
                             logger.info("✅ WhatsApp network connection restored. Bot reconnected successfully.")
@@ -735,7 +737,7 @@ class WhatsAppBotService:
             except Exception:
                 pass
             self._emit("whatsapp_status", {"is_running": False, "is_paired": self.is_paired})
-            self._ready_event.set()  # unblock any waiter on a failed startup
+            self._ready_event.set()
 
     def stop_bot(self) -> tuple[bool, str]:
         with self._lock:
